@@ -1,0 +1,29 @@
+[project]
+name = "comms-agent"
+version = "0.1.0"
+description = "通信系统智能体（OpenCode 重写）的 Python 域工具运行环境"
+# 域工具用 f-string / dataclass / 类型标注等；本机为 3.12，向下兼容到 3.10。
+requires-python = ">=3.10"
+dependencies = [
+    # 计算层：所有域工具（link_budget/path_loss/signal_analysis/ber_snr/modulation/
+    # channel/capacity/ofdm/pulse_shaping/equivalence_check 等）依赖。
+    "numpy>=1.24",
+    "scipy>=1.10",
+    # 可视化：plot 工具生成星座图/频谱/BER/波形/眼图 PNG。已是硬依赖（不再可选降级）。
+    "matplotlib>=3.7",
+    # 信道编码 / FEC：卷积码 Viterbi（scikit-commpy）、Reed-Solomon（reedsolo）。
+    # 已是硬依赖：channel_coding 与其自检不再因缺库 SKIP。
+    "scikit-commpy>=0.8.0",
+    "reedsolo>=1.7.0",
+]
+
+# 说明：本项目用 uv 管理 Python 环境。
+#   uv sync                 # 创建 .venv 并按 uv.lock 安装全部依赖
+#   uv run python <script>  # 在受管环境内运行
+# 启动 / 自检 / 路由脚本会把 PYTHON_BIN 指向 .venv 内的解释器，
+# OpenCode 的 custom tool 桥接（Bun.spawn）据此使用同一环境，避免解释器漂移。
+# requirements.txt 由 `uv export --no-hashes --no-emit-project -o requirements.txt` 生成，仅作兼容入口。
+
+[tool.uv]
+# 纯环境管理，不把本项目当可安装包（无 src 布局 / 无 __init__ 包结构）。
+package = false

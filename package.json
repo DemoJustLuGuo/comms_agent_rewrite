@@ -1,0 +1,14 @@
+{
+  "name": "comms-agent-pi",
+  "version": "0.1.0",
+  "private": true,
+  "description": "通信系统智能体（pi 运行时重写）：域工具经 .pi/extensions 注册，Python 计算核在 tools/",
+  "type": "module",
+  "scripts": {
+    "pi": "pi",
+    "test:py": "uv run python -X utf8 scripts/tests/test_domain_tools.py"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "0.80.3"
+  }
+}
