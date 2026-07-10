@@ -15,7 +15,10 @@ set_comms_python_bin() {
     # Windows venv 布局在前（Git Bash），POSIX 布局在后
     for candidate in "$project_root/.venv/Scripts/python.exe" "$project_root/.venv/bin/python"; do
         if [ -x "$candidate" ]; then
-            export PYTHON_BIN="$candidate"
+            # 关键：node（pi 扩展）spawn 不认 MSYS 的 /f/... 路径，必须导出 Windows 形态
+            # （F:/...）。真正的 Linux/macOS 没有 cygpath，回退原样。
+            PYTHON_BIN="$(cygpath -m "$candidate" 2>/dev/null || echo "$candidate")"
+            export PYTHON_BIN
             return 0
         fi
     done

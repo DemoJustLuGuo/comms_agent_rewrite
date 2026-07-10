@@ -1,5 +1,9 @@
 # comms-optimize 真实项目优化闭环验证（Runbook）
 
+> **⚠️ 历史记录（OpenCode 时代，2026-07-07）**：本文中的 `.ps1` / `opencode` / `start-opencode` 命令
+> 均属旧栈，仅作历史参照。pi 栈的等效闭环已于 2026-07-10 重演通过（见 `pi_migration.md` §C1），
+> 现行流程：`scripts/comms-optimize.sh` + `/optimize-loop` 模板 + `scripts/check-real-project.sh` 验证。
+
 目标：完成 `../../docs/ACCEPTANCE.md` §7 的最后一项——`comms-optimize` 对
 `real_projects/ModulationPy` 跑通一次完整闭环：**读代码 → 提出修改 → 审批 → 修改文件 →
 运行验证 → 汇报结果差异**。

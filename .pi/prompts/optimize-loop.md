@@ -2,9 +2,9 @@
 description: 对 real_projects/ModulationPy 跑一次低风险优化闭环
 argument-hint: "[额外要求]"
 ---
-按 `docs/optimize_loop_validation.md` 的流程，对 `real_projects/ModulationPy` 跑一次低风险优化闭环。动手前先读取：
+按下述流程对 `real_projects/ModulationPy` 跑一次低风险优化闭环。动手前先读取：
 
-- `docs/real_project_integration.md`：确认真实项目路径、允许修改范围、验证命令。
+- `docs/real_project_integration.md`：确认真实项目路径、允许修改范围、验证命令与验收标准。
 - `docs/model_output_review_checklist.md`：确认最终审阅和保留/回退标准。
 
 1. 先只读读懂 `real_projects/ModulationPy/ModulationPy/ModulationPy.py`，用一两句话说明现状与可改进点。

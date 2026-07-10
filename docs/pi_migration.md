@@ -38,6 +38,15 @@ pi-web 集成形态：spawn 自带打包的 pi（RPC 模式），不用项目 pi
 3. **`core.autocrlf` 环境**下 git checkout 恢复文本为 CRLF，测试断言需归一化行尾。
 4. **`-p` 单轮模式**下模型可能在对话层征求确认而停住（提示词里的"等用户同意"）；脚本化验收用 `-c -p "同意…"` 续行，或在 `/optimize-loop` 的额外要求里声明免确认。
 5. pi-web 的 `/api/agent/new` 请求体：`{cwd, type:"ensure_session", provider, modelId, toolNames?}`；会话内命令为 RPC envelope（`{"type":"prompt"|"get_state"|...}`）。
+6. **PYTHON_BIN 必须是 Windows 形态**：venv-python.sh 曾导出 `/f/.../python.exe`（MSYS 形态），bash 里能跑、但 pi 扩展（node）spawn 时 ENOENT——凡经启动脚本的会话，15 个 Python 域工具全部静默失败、模型退化为 bash 手算。该 bug 由路由验证 harness 首跑抓获（旧栈 validate-tool-routing 值得迁移的活证据），已在 venv-python.sh 用 cygpath -m 修复。
+
+## 能力审计（2026-07-10，迁移完成后全量对照）
+
+对旧栈能力面逐项核对后补齐 4 个缺口：①AGENTS.md 项目规则（pi 自动加载；含 MATLAB 定位决策、equivalence_check/online_knowledge 安全口径）；②`scripts/validate-tool-routing.sh` 模型端路由验证 harness（16 工具逐个真实调用，断言 toolName 事件 + 结果锚点）；③agent-facing 文档旧栈残留清理（real_project_integration.md 重写为 .sh 命令，optimize_loop_validation.md 加历史注记）；④optimize 提示词补 pyright CLI 降级说明（pi 无 LSP）。
+
+**路由验证结果：16/16 全 PASS**（15 域工具 + mcp_matlab_evaluate_matlab_code；comms_lint 首跑遇网关限流"total request limit reached"，配额恢复后复跑通过——跑批时的限流属网关侧用量窗口，与栈无关）。
+
+有意不迁（记录在案）：`small_model`（pi 无此概念）；`webfetch` 权限类目（pi 无内置 webfetch，网络面 = bash curl〔经审批〕+ online_knowledge〔实现级白名单〕）；`shell: pwsh` 本机覆盖（pi 统一 Git Bash）；`sync_opencode_profile.py`（opencode 专属）；workbench 中文工具名 hack（pi 工具原生 `label` 字段承载）。
 
 ## C1 优化闭环重演验收（ModulationPy）
 

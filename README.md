@@ -60,8 +60,9 @@ real_projects/ModulationPy/   # 优化目标（独立 git 仓库，gitignored）
 ## 验证
 
 ```bash
-scripts/check-runtime.sh --full   # 依赖 + 隔离配置 + 扩展冒烟(16/7/3) + Python 单测(87+11)
-scripts/check-real-project.sh     # ModulationPy tests.py（优化闭环的行为等价基线）
+scripts/check-runtime.sh --full        # 依赖 + 隔离配置 + 扩展冒烟(16/8/3) + Python 单测(87+11)，离线
+scripts/validate-tool-routing.sh       # 模型端路由验证：16 工具逐个真实调用（走 deepseek，需 .env；--quick 跳过联网/MATLAB 例）
+scripts/check-real-project.sh          # ModulationPy tests.py（优化闭环的行为等价基线）
 ```
 
 ## 已知边界
