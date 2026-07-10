@@ -1,0 +1,4 @@
+{
+  "defaultProvider": "comms-gateway",
+  "defaultModel": "deepseek-v4-flash"
+}
