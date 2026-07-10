@@ -65,7 +65,7 @@ def print_results(distances_km: np.ndarray, prx_dbm: np.ndarray) -> None:
 
 def run():
     # --- 链路参数（单位均已标注） ---
-    tx_power_dbm: float = 30.0      # 发射功率, dBm
+    tx_power_dbm: float = 23.0      # 发射功率, dBm（典型 Wi-Fi 功率）
     tx_gain_dbi: float = 15.0       # 发射天线增益, dBi
     rx_gain_dbi: float = 12.0       # 接收天线增益, dBi
     freq_mhz: float = 2400.0        # 载波频率, MHz
