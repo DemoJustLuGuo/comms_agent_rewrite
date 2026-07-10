@@ -38,5 +38,8 @@ delete process.env.COMMS_APPROVAL
 const eq = await handler({ toolName: "equivalence_check", input: { baseline_cmd: "python old.py", candidate_cmd: "python new.py" } }, mkCtx(false))
 check("equivalence_check→纳管", !!eq && eq.block === true)
 check("摘要含命令", summarize("equivalence_check", { baseline_cmd: "python old.py", candidate_cmd: "python new.py" }).includes("old.py"))
+// 7) MCP 桥接工具（mcp_ 前缀）纳管——对应旧栈 matlab* = ask
+const mcp = await handler({ toolName: "mcp_matlab_evaluate_matlab_code", input: { code: "sqrt(2)" } }, mkCtx(false))
+check("mcp_* 前缀→纳管", !!mcp && mcp.block === true)
 
 process.exit(failed ? 1 : 0)

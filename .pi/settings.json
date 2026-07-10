@@ -1,4 +1,7 @@
 {
   "defaultProvider": "comms-gateway",
-  "defaultModel": "deepseek-v4-flash"
+  "defaultModel": "deepseek-v4-flash",
+  "packages": [
+    "npm:pi-mcp-extension@1.5.0"
+  ]
 }

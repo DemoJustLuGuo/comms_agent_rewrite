@@ -32,7 +32,8 @@ scripts/comms-web.sh         # Web UI：http://127.0.0.1:30190
 ├── extensions/approval-gate.ts   # 审批门：bash/edit/write/equivalence_check 执行前须确认，无 UI 时 fail-closed
 ├── extensions/git-checkpoint.ts  # 回滚：每次 edit/write 前按文件所属仓库打快照，/rollback 恢复
 ├── prompts/                  # 10 个 /命令 模板（/term /rf-calc /fec /ofdm /optimize-loop …）
-└── settings.json             # 默认模型 comms-gateway/deepseek-v4-flash
+├── mcp.json                  # MCP server 配置：matlab（经 pi-mcp-extension 桥接为 mcp_matlab_* 工具）
+└── settings.json             # 默认模型 + 项目级 pi 包（pi-mcp-extension）
 config/
 ├── models.template.json      # provider 模板（baseUrl 来自 .env；key 只走 $OPENAI_API_KEY）
 └── prompts/                  # qa / optimize 双模式人设（经 --append-system-prompt 注入）
@@ -65,5 +66,8 @@ scripts/check-real-project.sh     # ModulationPy tests.py（优化闭环的行�
 
 ## 已知边界
 
-- MATLAB 能力暂未接入（规划：Python `matlab.engine` 直包为域工具，MATLAB 可选自备）。
-- pi/pi-web 均为 pre-1.0，版本已在 package.json 精确锁定，升级需重跑自检。
+- **MATLAB**：经 `pi-mcp-extension`（项目级锁定 1.5.0）+ MathWorks 官方 matlab-mcp-server 接入，
+  注册为 `mcp_matlab_*` 五个工具（evaluate / check / run_file / run_test_file / detect_toolboxes），
+  全部过审批门；MATLAB 安装自动发现（MATLAB_ROOT → PATH → 注册表），本机无 MATLAB 时自动降级为不可用
+  （自检 WARN 不 FAIL）。二进制不入 git，获取方式见 `bin/README.md`。
+- pi/pi-web 均为 pre-1.0，版本已在 package.json / .pi/settings.json 精确锁定，升级需重跑自检。

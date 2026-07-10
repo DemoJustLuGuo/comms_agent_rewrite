@@ -27,8 +27,9 @@ pi-web 集成形态：spawn 自带打包的 pi（RPC 模式），不用项目 pi
 - **B1**：15 域工具全量迁移（`.pi/extensions/comms-tools/defs.ts` 单表 + `runner.ts` 公共桥）；路由知识内聚 `promptSnippet`；冒烟 16/16。
 - **B2**：10 个 `/命令` 模板（`.pi/prompts/`）；qa/optimize 双模式 = 启动脚本（qa 用 `--exclude-tools` 能力级隔离）+ `--append-system-prompt` 人设；`/term FSPL` 端到端验证知识检索闭环。
 - **B3**：git-checkpoint 回滚扩展（按被改文件**所属仓库**打 stash 快照；`/rollback` 单文件恢复/新建删除）；真实仓库冒烟 3/3。
-- **B4**：`scripts/check-runtime.sh --full` 一键自检（依赖/隔离/16+7+3 冒烟/87+11 单测）全绿。
-- **B5**（未做，可选后置）：MATLAB `matlab.engine` 直包域工具。
+- **B4**：`scripts/check-runtime.sh --full` 一键自检（依赖/隔离/16+8+3 冒烟/87+11 单测）全绿。
+- **B5**（2026-07-10 补完）：**MATLAB 经 MCP 迁移**——沿用旧栈原物（MathWorks 官方 matlab-mcp-server v0.11.1 二进制 + `start_matlab_mcp.py` 三级发现包装），宿主从 opencode.json 的 `mcp` 块换成 **pi-mcp-extension**（社区成熟 MCP 客户端，项目级锁定 1.5.0，装于 `.pi/npm/`）。配置 `.pi/mcp.json`（stdio、eager、120s 超时）。注册为 `mcp_matlab_*` 五工具；审批门以 `mcp_` 前缀统一纳管（对应旧栈 `matlab* = ask`）；comms-qa 启动脚本精确排除五个工具名（只读边界）。**E2E 实测**：deepseek 调 `mcp_matlab_evaluate_matlab_code` 算 FSPL 得 120.0460 dB，并自发用 `link_budget` 域工具交叉验证——MCP 工具与域工具同会话协同。无 MATLAB 的机器自动降级（自检 WARN 不 FAIL）。
+  - 决策注记：原计划方案②（`matlab.engine` 直包）被否——用户判断"沿用 MCP 设定"正确且成本更低：pi 生态已有生产级 MCP 客户端扩展，旧 server 二进制与发现逻辑零改动复用；`matlab.engine` 反而要求 venv 匹配 MATLAB 版本安装引擎包。
 
 ## 踩坑记录（换机/复现必读）
 
@@ -66,6 +67,7 @@ pi-web 集成形态：spawn 自带打包的 pi（RPC 模式），不用项目 pi
 
 ## 后续事项
 
-- B5 MATLAB 工具（需求触发时做）；
-- pi / pi-web 升级流程：改 package.json 版本 → `bun install` → `scripts/check-runtime.sh --full` 全绿才算升级完成；
+- ~~B5 MATLAB 工具~~（2026-07-10 已完成，见 Phase B 交付）；
+- pi / pi-web / pi-mcp-extension 升级流程：改 package.json / .pi/settings.json 版本 → `bun install` 或 `pi update` → `scripts/check-runtime.sh --full` 全绿才算升级完成；
+- 新增 MCP server 时：写 `.pi/mcp.json` → 审批门自动覆盖（`mcp_` 前缀）→ **同步 comms-qa.sh 的排除名单**（只读边界靠精确工具名）；
 - knowledge/ 扩充与检索召回评测（旧栈遗留课题，与运行时无关）。

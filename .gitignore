@@ -9,6 +9,12 @@ node_modules/
 # pi 运行时数据（会话/专属 agent home 不入库）
 agent-home/
 .pi/sessions/
+# pi 包安装目录（pi install -l 落地处；启动时按 .pi/settings.json 自动补装）
+.pi/npm/
+
+# MCP server 二进制（18MB，自备；获取方式见 bin/README.md）
+bin/*.exe
+bin/matlab-mcp-server
 
 # 产物
 plots/*.png
