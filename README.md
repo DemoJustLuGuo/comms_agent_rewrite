@@ -32,7 +32,7 @@ scripts/comms-web.sh         # Web UI：http://127.0.0.1:30190
 ├── extensions/approval-gate.ts   # 审批门：bash/edit/write/equivalence_check 执行前须确认，无 UI 时 fail-closed
 ├── extensions/git-checkpoint.ts  # 回滚：每次 edit/write 前按文件所属仓库打快照，/rollback 恢复
 ├── prompts/                  # 10 个 /命令 模板（/term /rf-calc /fec /ofdm /optimize-loop …）
-├── mcp.json                  # MCP server 配置：matlab（经 pi-mcp-extension 桥接为 mcp_matlab_* 工具）
+├── mcp.json                  # MCP server：matlab（mcp_matlab_*）+ fetch（mcp_fetch_fetch，网页抓取，对应旧栈 webfetch）
 └── settings.json             # 默认模型 + 项目级 pi 包（pi-mcp-extension）
 config/
 ├── models.template.json      # provider 模板（baseUrl 来自 .env；key 只走 $OPENAI_API_KEY）

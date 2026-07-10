@@ -46,7 +46,18 @@ pi-web 集成形态：spawn 自带打包的 pi（RPC 模式），不用项目 pi
 
 **路由验证结果：16/16 全 PASS**（15 域工具 + mcp_matlab_evaluate_matlab_code；comms_lint 首跑遇网关限流"total request limit reached"，配额恢复后复跑通过——跑批时的限流属网关侧用量窗口，与栈无关）。
 
-有意不迁（记录在案）：`small_model`（pi 无此概念）；`webfetch` 权限类目（pi 无内置 webfetch，网络面 = bash curl〔经审批〕+ online_knowledge〔实现级白名单〕）；`shell: pwsh` 本机覆盖（pi 统一 Git Bash）；`sync_opencode_profile.py`（opencode 专属）；workbench 中文工具名 hack（pi 工具原生 `label` 字段承载）。
+### opencode 内建工具的 pi 平替（2026-07-10 调研+实证）
+
+| opencode 内建 | pi 平替 | 状态 |
+|---|---|---|
+| `webfetch`（ask 门控） | 官方 MCP fetch server（`uvx mcp-server-fetch`）经 pi-mcp-extension 挂载，注册为 `mcp_fetch_fetch`，自动落审批门 `mcp_` 前缀 | ✅ 已落地，E2E 实测抓取 example.com 成功；审批语义与旧栈 `webfetch: ask` 精确对齐 |
+| `grep` / `glob` / `list` | **pi 原生就有** `grep`/`find`/`ls` 内建工具，默认未启用；`--tools` 白名单可点亮（实测模型自报可用） | ✅ 机制实证；启用方式待定（建议双模式改 `--tools` 正向白名单，顺带让 qa 获得知识检索能力） |
+| `todowrite` / `todoread` | 官方示例 `examples/extensions/todo.ts`（297 行，拷入 .pi/extensions 即用） | 📦 备选未装（当前工作流未用到） |
+| `task`（子代理） | 官方示例 `examples/extensions/subagent/`（完整包结构） | 📦 备选未装（旧栈也未启用） |
+| `patch` | pi 的 `edit` 覆盖 | — 无需 |
+| LSP 诊断 | `npx pyright` CLI 降级（已写入 optimize 提示词） | ✅ 已处理 |
+
+有意不迁（记录在案）：`small_model`（pi 无此概念）；`shell: pwsh` 本机覆盖（pi 统一 Git Bash）；`sync_opencode_profile.py`（opencode 专属）；workbench 中文工具名 hack（pi 工具原生 `label` 字段承载）。
 
 ## C1 优化闭环重演验收（ModulationPy）
 
