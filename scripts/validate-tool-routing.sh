@@ -18,6 +18,11 @@ MODEL="comms-gateway/deepseek-v4-flash"
 CASES=(
   'link_budget|调用 link_budget 工具：发射功率 30 dBm、发射增益 15 dBi、接收增益 12 dBi、载频 2400 MHz、距离 10 km、其他损耗 2 dB，给出接收功率。|-65.04'
   'path_loss|调用 path_loss 工具：model=hata、900 MHz、5 km、市区默认天线高度，给出路径损耗。|路径损耗'
+  'rf_chain|调用 rf_chain 工具：mode=cascade，两级接收链 LNA(增益15dB,NF1.2dB)+混频器(增益-7dB,NF8dB)，给出总噪声系数。|1.72'
+  'interference|调用 interference 工具：mode=ci、载波 -80 dBm、两个干扰源各 -100 dBm，给出载干比。|16.99'
+  'channel_profile|调用 channel_profile 工具：载频 2600 MHz、速度 120 km/h、时延扩展 1 微秒，给出多普勒频移与相干带宽。|相干带宽'
+  'fade_margin|调用 fade_margin 工具：mode=rain、freq_ghz=23、distance_km=5、rain_rate_mm_h=42、polarization=v，估算雨衰。|雨衰'
+  'signal_diagnose|调用 signal_diagnose 工具：signal_file=scripts/dev/fixtures/sig_100hz.txt、sample_rate_hz=1000，做信号诊断。|诊断'
   'ber_snr|调用 ber_snr 工具：QPSK、mode=snr_to_ber、snr_db=8，给出理论 BER。|BER'
   'modulation|调用 modulation 工具：mode=constellation、modulation=QPSK，给出理想星座点。|星座'
   'channel|调用 channel 工具：BPSK、fading=awgn、snr_db=6、num_bits=20000、seed=1，给出经验 BER。|BER'

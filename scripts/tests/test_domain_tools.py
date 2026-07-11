@@ -785,5 +785,145 @@ class EquivalenceCheckTests(unittest.TestCase):
         self.assertNotEqual(r.returncode, 0)
 
 
+class RfChainTests(unittest.TestCase):
+    def test_cascade_friis_known_value(self):
+        # F1=10^0.12=1.3183, F2=10^0.8=6.3096, G1=10^1.5=31.623
+        # F = 1.3183 + 5.3096/31.623 = 1.4862 → 1.72 dB
+        r = run_tool("rf_chain", {"mode": "cascade", "stages": [
+            {"name": "LNA", "gain_db": 15, "nf_db": 1.2},
+            {"name": "Mixer", "gain_db": -7, "nf_db": 8}]})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertAlmostEqual(_extract_float(r.stdout, r"总噪声系数 NF"), 1.72, places=2)
+        self.assertAlmostEqual(_extract_float(r.stdout, "总增益"), 8.00, places=2)
+
+    def test_noise_floor_290k(self):
+        # -173.98 dBm/Hz + 10log10(1e6) = -113.98 dBm
+        r = run_tool("rf_chain", {"mode": "noise_floor", "bandwidth_hz": 1e6})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertAlmostEqual(_extract_float(r.stdout, "噪声底"), -113.98, places=2)
+
+    def test_sensitivity_with_direct_nf(self):
+        # -113.98 + 5 + 10 = -98.98 dBm
+        r = run_tool("rf_chain", {"mode": "sensitivity", "bandwidth_hz": 1e6,
+                                  "nf_db": 5, "required_snr_db": 10})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertAlmostEqual(_extract_float(r.stdout, "接收灵敏度"), -98.98, places=2)
+
+    def test_cascade_requires_stages(self):
+        r = run_tool("rf_chain", {"mode": "cascade"})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("错误", r.stdout)
+
+
+class InterferenceTests(unittest.TestCase):
+    def test_ci_two_equal_interferers(self):
+        # 两个 -100 dBm 线性叠加 = -96.99 dBm；C/I = -80 - (-96.99) = 16.99 dB
+        r = run_tool("interference", {"mode": "ci", "carrier_dbm": -80,
+                                      "interferers": [{"power_dbm": -100}, {"power_dbm": -100}]})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertAlmostEqual(_extract_float(r.stdout, r"C/I"), 16.99, places=2)
+
+    def test_sinr_with_ktb_noise(self):
+        r = run_tool("interference", {"mode": "sinr", "carrier_dbm": -80,
+                                      "interferers": [{"power_dbm": -95}],
+                                      "bandwidth_hz": 1e7, "nf_db": 5, "required_ci_db": 12})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("SINR", r.stdout)
+        self.assertIn("余量", r.stdout)
+
+    def test_empty_interferers_rejected(self):
+        r = run_tool("interference", {"mode": "ci", "carrier_dbm": -80, "interferers": []})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("错误", r.stdout)
+
+
+class ChannelProfileTests(unittest.TestCase):
+    def test_doppler_known_value(self):
+        # fd = (120/3.6)·2600e6/c = 289.09 Hz
+        r = run_tool("channel_profile", {"freq_mhz": 2600, "speed_kmh": 120})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertAlmostEqual(_extract_float(r.stdout, "多普勒频移"), 289.09, places=1)
+
+    def test_coherence_bandwidth(self):
+        # Bc = 1/(5·1e-6) = 200 kHz
+        r = run_tool("channel_profile", {"delay_spread_us": 1.0})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertAlmostEqual(_extract_float(r.stdout, "相干带宽"), 200.0, places=1)
+
+    def test_classification_slow_flat(self):
+        r = run_tool("channel_profile", {"freq_mhz": 2600, "speed_kmh": 120,
+                                         "delay_spread_us": 1.0, "symbol_rate_sps": 15000})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("慢衰落", r.stdout)
+        self.assertIn("平坦衰落", r.stdout)
+
+    def test_requires_at_least_one_group(self):
+        r = run_tool("channel_profile", {})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("错误", r.stdout)
+
+
+class FadeMarginTests(unittest.TestCase):
+    def test_margin_simple(self):
+        r = run_tool("fade_margin", {"mode": "margin", "rx_power_dbm": -72,
+                                     "sensitivity_dbm": -95, "required_margin_db": 20})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertAlmostEqual(_extract_float(r.stdout, "衰落余量"), 23.0, places=2)
+        self.assertIn("满足", r.stdout)
+
+    def test_rain_reasonable_range(self):
+        # 23 GHz / 5 km / 42 mm/h 垂直极化：工程量级 10~30 dB
+        r = run_tool("fade_margin", {"mode": "rain", "freq_ghz": 23, "distance_km": 5,
+                                     "rain_rate_mm_h": 42, "polarization": "v"})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        atten = _extract_float(r.stdout, r"雨衰 A")
+        self.assertGreater(atten, 5.0)
+        self.assertLess(atten, 40.0)
+        self.assertIn("近似", r.stdout)  # 必须转述近似口径
+
+    def test_rain_rejects_out_of_band(self):
+        r = run_tool("fade_margin", {"mode": "rain", "freq_ghz": 60, "distance_km": 5,
+                                     "rain_rate_mm_h": 42})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("错误", r.stdout)
+
+
+class SignalDiagnoseTests(unittest.TestCase):
+    def _sine(self, n=4096, fs=10000.0, freq=440.0):
+        import math as _m
+        return [_m.sin(2 * _m.pi * freq * k / fs) for k in range(n)]
+
+    def test_clean_sine_no_symptoms(self):
+        r = run_tool_stdin("signal_diagnose", {"signal": self._sine(), "sample_rate_hz": 10000})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("未触发症状", r.stdout)
+
+    def test_dc_offset_detected(self):
+        sig = [x + 0.3 for x in self._sine()]
+        r = run_tool_stdin("signal_diagnose", {"signal": sig, "sample_rate_hz": 10000})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("DC 偏置显著", r.stdout)
+
+    def test_clipping_detected(self):
+        sig = [max(-0.8, min(0.8, 1.3 * x)) for x in self._sine()]
+        r = run_tool_stdin("signal_diagnose", {"signal": sig, "sample_rate_hz": 10000})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("疑似削波", r.stdout)
+
+    def test_iq_imbalance_detected(self):
+        import math as _m
+        n, fs = 4096, 10000.0
+        i = [1.1 * _m.cos(2 * _m.pi * 440 * k / fs) for k in range(n)]
+        q = [_m.sin(2 * _m.pi * 440 * k / fs + _m.radians(5)) for k in range(n)]
+        r = run_tool_stdin("signal_diagnose", {"i": i, "q": q, "sample_rate_hz": fs})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("IQ 失衡", r.stdout)
+
+    def test_too_short_rejected(self):
+        r = run_tool_stdin("signal_diagnose", {"signal": [0.1] * 8, "sample_rate_hz": 1000})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("错误", r.stdout)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

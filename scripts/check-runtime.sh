@@ -60,16 +60,16 @@ if [ -n "${PYTHON_BIN:-}" ]; then
   fi
 fi
 
-# 6) 扩展冒烟（15 域工具桥 + 审批门 + 回滚）
+# 6) 扩展冒烟（20 域工具桥 + 审批门 + 回滚）
 echo "--- 扩展冒烟 ---"
-bun "$ROOT/scripts/dev/smoke_extension.ts"  >/tmp/ck_ext.log 2>&1 && ok "域工具冒烟 16/16"   || { bad "域工具冒烟失败（详见 /tmp/ck_ext.log）"; }
+bun "$ROOT/scripts/dev/smoke_extension.ts"  >/tmp/ck_ext.log 2>&1 && ok "域工具冒烟 21/21"   || { bad "域工具冒烟失败（详见 /tmp/ck_ext.log）"; }
 bun "$ROOT/scripts/dev/smoke_gate.ts"       >/tmp/ck_gate.log 2>&1 && ok "审批门单测 8/8"     || { bad "审批门单测失败（详见 /tmp/ck_gate.log）"; }
 bun "$ROOT/scripts/dev/smoke_checkpoint.ts" >/tmp/ck_ckpt.log 2>&1 && ok "回滚扩展冒烟 3/3"   || { bad "回滚冒烟失败（详见 /tmp/ck_ckpt.log）"; }
 
-# 6) --full：完整 Python 单测（87 + 11）
+# 6) --full：完整 Python 单测（106 + 11）
 if [ "${1:-}" = "--full" ]; then
   echo "--- Python 单测（--full）---"
-  "$PYTHON_BIN" -X utf8 "$ROOT/scripts/tests/test_domain_tools.py"    >/tmp/ck_py1.log 2>&1 && ok "域工具单测 87 条" || bad "域工具单测失败（/tmp/ck_py1.log）"
+  "$PYTHON_BIN" -X utf8 "$ROOT/scripts/tests/test_domain_tools.py"    >/tmp/ck_py1.log 2>&1 && ok "域工具单测 106 条" || bad "域工具单测失败（/tmp/ck_py1.log）"
   "$PYTHON_BIN" -X utf8 "$ROOT/scripts/tests/test_online_knowledge.py" >/tmp/ck_py2.log 2>&1 && ok "在线知识单测 11 条" || bad "在线知识单测失败（/tmp/ck_py2.log）"
 fi
 

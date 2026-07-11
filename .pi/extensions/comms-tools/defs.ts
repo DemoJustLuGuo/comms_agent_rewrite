@@ -1,11 +1,13 @@
 /**
- * comms 域工具声明表：15 个工具的 name/label/描述/Typebox schema/运行 spec。
+ * comms 域工具声明表：20 个工具的 name/label/描述/Typebox schema/运行 spec。
  *
- * 迁移自 opencode 时代 15 份 .ts 桥（schema 语义一字不动，zod→Typebox 机械转换）；
- * promptSnippet 承载原 qa.md/optimize.md 里的工具路由规则——路由知识只在这一处维护。
+ * 前 15 个迁移自 opencode 时代 15 份 .ts 桥（schema 语义一字不动，zod→Typebox 机械转换）；
+ * 2026-07-11 场景审计后新增 5 个：rf_chain/interference/channel_profile/fade_margin（工程评估）
+ * + signal_diagnose（故障定位）。
+ * promptSnippet 承载工具路由规则——路由知识只在这一处维护。
  *
  * 约定：
- * - 大数组参数的工具（modulation/signal_analysis/online_knowledge/plot）走 stdin（spec.stdinJson）。
+ * - 大数组参数的工具（modulation/signal_analysis/signal_diagnose/online_knowledge/plot）走 stdin（spec.stdinJson）。
  * - 蒙特卡洛/FEC 类超时放宽（channel_coding 180s、equivalence_check 120s），其余 30s。
  */
 import { Type } from "typebox"
@@ -67,6 +69,93 @@ export const DEFS: CommsToolDef[] = [
       ),
     }),
     spec: { script: "path_loss.py", failureHint: "确认输入合法（频率/距离为正数，area 与所选 model 匹配）。" },
+  },
+  {
+    name: "rf_chain",
+    label: "接收链评估",
+    description:
+      "接收链噪声与灵敏度评估：Friis 级联噪声系数（逐级贡献占比）、kTB 热噪声底、接收灵敏度（噪声底+NF+所需SNR）。用于「这条接收链 NF 多少 / 灵敏度多少 dBm / 噪声底多少」类工程评估。",
+    promptSnippet:
+      "噪声系数级联/噪声底/接收灵敏度调用 rf_chain（mode=cascade|noise_floor|sensitivity），不要心算。",
+    parameters: Type.Object({
+      mode: StringEnum(["cascade", "sensitivity", "noise_floor"], {
+        description: "cascade=Friis 级联 NF；sensitivity=接收灵敏度；noise_floor=kTB 噪声底",
+      }),
+      stages: Type.Optional(
+        Type.Array(
+          Type.Object({
+            name: Type.Optional(Type.String({ description: "级名称（如 LNA/混频器/线缆）" })),
+            gain_db: Type.Number({ description: "该级增益，dB（损耗为负）" }),
+            nf_db: Type.Number({ description: "该级噪声系数，dB（无源损耗件 NF=|损耗|）" }),
+          }),
+          { description: "cascade 必填、sensitivity 可用：按信号方向排列的各级" },
+        ),
+      ),
+      nf_db: Type.Optional(Type.Number({ description: "sensitivity：整机噪声系数，dB（与 stages 二选一）" })),
+      bandwidth_hz: Type.Optional(Type.Number({ description: "sensitivity/noise_floor 必填：噪声带宽，Hz" })),
+      required_snr_db: Type.Optional(Type.Number({ description: "sensitivity 必填：解调所需 SNR，dB" })),
+      temperature_k: Type.Optional(Type.Number({ description: "噪声温度，K，默认 290" })),
+    }),
+    spec: { script: "rf_chain.py", failureHint: "按 mode 提供必填参数（cascade 需 stages；sensitivity 需 bandwidth_hz+required_snr_db+nf_db 或 stages）。" },
+  },
+  {
+    name: "interference",
+    label: "干扰分析",
+    description:
+      "载干比 C/I 与 SINR 计算：多干扰源功率在线性域叠加，可结合 kTB(+NF) 噪声算 SINR，给定门限时输出余量结论。用于共道/邻道干扰评估、部署间距核算。",
+    promptSnippet: "载干比 C/I、SINR、干扰余量调用 interference（多干扰源自动线性域叠加），不要手加 dB。",
+    parameters: Type.Object({
+      mode: StringEnum(["ci", "sinr"], { description: "ci=载干比；sinr=含噪声的信干噪比" }),
+      carrier_dbm: Type.Number({ description: "载波接收功率，dBm" }),
+      interferers: Type.Array(
+        Type.Object({
+          power_dbm: Type.Number({ description: "该干扰源接收功率，dBm" }),
+          name: Type.Optional(Type.String({ description: "干扰源名称" })),
+        }),
+        { description: "干扰源列表（≥1 项）" },
+      ),
+      noise_floor_dbm: Type.Optional(Type.Number({ description: "sinr：噪声功率，dBm（与 bandwidth_hz 二选一）" })),
+      bandwidth_hz: Type.Optional(Type.Number({ description: "sinr：由 kTB 算噪声的带宽，Hz" })),
+      nf_db: Type.Optional(Type.Number({ description: "sinr：接收机噪声系数，dB，默认 0（与 bandwidth_hz 搭配）" })),
+      temperature_k: Type.Optional(Type.Number({ description: "噪声温度，K，默认 290" })),
+      required_ci_db: Type.Optional(Type.Number({ description: "解调所需 C/I 或 SINR 门限，dB；给了则输出余量结论" })),
+    }),
+    spec: { script: "interference.py", failureHint: "确认 interferers 非空；sinr 模式需 noise_floor_dbm 或 bandwidth_hz。" },
+  },
+  {
+    name: "channel_profile",
+    label: "信道特征",
+    description:
+      "无线信道特征判定：由载频+速度算最大多普勒频移与相干时间（Tc≈0.423/fd），由 RMS 时延扩展算相干带宽（Bc≈1/(5στ)）；给定符号率/带宽时输出 快衰/慢衰、平坦/频选 判定及依据。用于「该场景是不是频率选择性/要不要均衡或 OFDM」类判断。",
+    promptSnippet:
+      "多普勒/相干时间/相干带宽/快慢衰/平坦频选判定调用 channel_profile（freq+speed 或 delay_spread 至少一组）。",
+    parameters: Type.Object({
+      freq_mhz: Type.Optional(Type.Number({ description: "载频，MHz（与 speed_kmh 搭配算多普勒）" })),
+      speed_kmh: Type.Optional(Type.Number({ description: "相对运动速度，km/h" })),
+      delay_spread_us: Type.Optional(Type.Number({ description: "RMS 时延扩展 στ，μs（算相干带宽）" })),
+      symbol_rate_sps: Type.Optional(Type.Number({ description: "符号率，symbol/s（给了才输出快慢衰/平坦频选判定）" })),
+      signal_bandwidth_hz: Type.Optional(Type.Number({ description: "信号带宽，Hz（不给则用符号率近似）" })),
+    }),
+    spec: { script: "channel_profile.py", failureHint: "至少提供 freq_mhz+speed_kmh 或 delay_spread_us 其中一组。" },
+  },
+  {
+    name: "fade_margin",
+    label: "衰落余量",
+    description:
+      "衰落余量与雨衰估算：margin=接收电平-灵敏度（联动 rf_chain 口径）；rain=ITU-R P.838-3 比衰减 + P.530 有效路径缩减的地面视距链路雨衰近似（1~40 GHz，R≤100 mm/h，误差量级 ±20~30%，卫星/倾斜路径不适用）。用于链路可用性与毫米波雨衰预算。",
+    promptSnippet:
+      "衰落余量、雨衰（地面链路 1~40GHz 近似）调用 fade_margin（mode=margin|rain）；结论须转述其近似口径。",
+    parameters: Type.Object({
+      mode: StringEnum(["margin", "rain"], { description: "margin=衰落余量；rain=雨衰估算" }),
+      rx_power_dbm: Type.Optional(Type.Number({ description: "margin：接收电平，dBm" })),
+      sensitivity_dbm: Type.Optional(Type.Number({ description: "margin：接收灵敏度，dBm" })),
+      required_margin_db: Type.Optional(Type.Number({ description: "margin：所需余量门限，dB" })),
+      freq_ghz: Type.Optional(Type.Number({ description: "rain：频率，GHz（1~40）" })),
+      distance_km: Type.Optional(Type.Number({ description: "rain：链路距离，km" })),
+      rain_rate_mm_h: Type.Optional(Type.Number({ description: "rain：降雨率（0.01% 时间超越值常用），mm/h，≤100" })),
+      polarization: Type.Optional(StringEnum(["h", "v"], { description: "rain：极化，h 水平 / v 垂直，默认 h" })),
+    }),
+    spec: { script: "fade_margin.py", failureHint: "按 mode 提供必填参数（margin 需 rx_power_dbm+sensitivity_dbm；rain 需 freq_ghz+distance_km+rain_rate_mm_h）。" },
   },
   // ── 性能 / 仿真 ──────────────────────────────────────────────────────────
   {
@@ -246,6 +335,30 @@ export const DEFS: CommsToolDef[] = [
       script: "signal_analysis.py",
       stdinJson: true, // 信号数组可能很大
       failureHint: "确认 uv sync 已装 numpy/scipy，且输入信号非空。",
+    },
+  },
+  {
+    name: "signal_diagnose",
+    label: "信号诊断",
+    description:
+      "测量信号诊断（工程估计口径）：对实测数据估计 SNR、DC 偏置、削波（平顶段检测）、THD 谐波失真、IQ 幅度/相位失衡（需 i+q 双路，假设单音/窄带激励），输出指标与触发的症状条目。用于故障定位/信号质量体检；配合 knowledge/故障特征速查.md 定位根因。",
+    promptSnippet:
+      "实测信号「有没有问题/质量体检/故障定位」调用 signal_diagnose（三选一：signal / signal_file / i+q），再对照 knowledge/故障特征速查.md 给根因假设。",
+    parameters: Type.Object({
+      signal: Type.Optional(Type.Array(Type.Number(), { description: "实信号采样值（与 signal_file、i+q 三选一）" })),
+      signal_file: Type.Optional(
+        Type.String({ description: "信号文件路径（JSON 数组或空白/逗号分隔数值），长信号用这个" }),
+      ),
+      i: Type.Optional(Type.Array(Type.Number(), { description: "IQ 双路：同相分量 I（与 q 搭配，做 IQ 失衡估计）" })),
+      q: Type.Optional(Type.Array(Type.Number(), { description: "IQ 双路：正交分量 Q" })),
+      sample_rate_hz: Type.Number({ description: "采样率，Hz" }),
+      fundamental_hz: Type.Optional(Type.Number({ description: "基波频率，Hz（THD 用；不给则取最强谱峰）" })),
+      clip_level: Type.Optional(Type.Number({ description: "削波判定电平（绝对值），默认取峰值的 0.999 倍" })),
+    }),
+    spec: {
+      script: "signal_diagnose.py",
+      stdinJson: true, // 信号数组可能很大
+      failureHint: "确认提供了 signal / signal_file / i+q 之一，且信号至少 32 点。",
     },
   },
   {

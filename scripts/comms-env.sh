@@ -50,7 +50,7 @@ set_comms_python_bin
 #
 # 内建工具共 7 个：read/bash/edit/write（默认启用）+ grep/find/ls（默认关闭，
 # 白名单点亮，qa 靠它们检索 knowledge/）。
-COMMS_DOMAIN_TOOLS="link_budget,path_loss,ber_snr,modulation,channel,channel_coding,capacity,pulse_shaping,ofdm,signal_analysis,frame_parser,comms_lint,online_knowledge,plot"
+COMMS_DOMAIN_TOOLS="link_budget,path_loss,rf_chain,interference,channel_profile,fade_margin,ber_snr,modulation,channel,channel_coding,capacity,pulse_shaping,ofdm,signal_analysis,signal_diagnose,frame_parser,comms_lint,online_knowledge,plot"
 # equivalence_check 单列：会执行传入命令，qa 禁用、optimize 过审批门
 COMMS_MATLAB_TOOLS="mcp_matlab_check_matlab_code,mcp_matlab_detect_matlab_toolboxes,mcp_matlab_evaluate_matlab_code,mcp_matlab_run_matlab_file,mcp_matlab_run_matlab_test_file"
 COMMS_FETCH_TOOLS="mcp_fetch_fetch"

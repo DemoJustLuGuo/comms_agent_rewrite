@@ -28,17 +28,17 @@ scripts/comms-web.sh         # Web UI：http://127.0.0.1:30190
 
 ```
 .pi/
-├── extensions/comms-tools/   # 15 个域工具：defs.ts 声明表 + runner.ts 公共桥（spawn Python）
+├── extensions/comms-tools/   # 20 个域工具：defs.ts 声明表 + runner.ts 公共桥（spawn Python）
 ├── extensions/approval-gate.ts   # 审批门：bash/edit/write/equivalence_check 执行前须确认，无 UI 时 fail-closed
 ├── extensions/git-checkpoint.ts  # 回滚：每次 edit/write 前按文件所属仓库打快照，/rollback 恢复
-├── prompts/                  # 10 个 /命令 模板（/term /rf-calc /fec /ofdm /optimize-loop …）
+├── prompts/                  # 12 个 /命令 模板（/term /rf-calc /fec /diagnose /report /optimize-loop …）
 ├── mcp.json                  # MCP server：matlab（mcp_matlab_*）+ fetch（mcp_fetch_fetch，网页抓取，对应旧栈 webfetch）
 └── settings.json             # 默认模型 + 项目级 pi 包（pi-mcp-extension）
 config/
 ├── models.template.json      # provider 模板（baseUrl 来自 .env；key 只走 $OPENAI_API_KEY）
 └── prompts/                  # qa / optimize 双模式人设（经 --append-system-prompt 注入）
-tools/                        # 15 个 Python 计算核（numpy/scipy，与运行时无关）
-knowledge/                    # 通信术语速查 + 通信原理知识100问（grep/read 检索）
+tools/                        # 20 个 Python 计算核（numpy/scipy，与运行时无关）
+knowledge/                    # 术语速查 / 原理100问 / 工程评估速查 / 故障特征速查（grep/read 检索）
 scripts/                      # 启动入口 / 自检 / 真实项目验证 / dev 冒烟
 agent-home/                   # pi 配置与会话（PI_CODING_AGENT_DIR 指向，gitignored）
 real_projects/ModulationPy/   # 优化目标（独立 git 仓库，gitignored）
@@ -53,8 +53,8 @@ real_projects/ModulationPy/   # 优化目标（独立 git 仓库，gitignored）
 ## 双模式与安全
 
 - **双模式均为 `--tools` 正向白名单**（清单集中在 `scripts/comms-env.sh`；pi 的 `--tools` 全局过滤内建/扩展/MCP 工具）：
-  - **comms-qa**：只读面——read + grep/find/ls（知识检索）+ 14 个计算/绘图域工具 + fetch；无 bash/edit/write/equivalence_check/MATLAB，模型根本没有执行面工具。
-  - **comms-optimize**：全能力面（28 工具，含内建 grep/find/ls 免审批检索），审批门扩展在高危工具执行前弹确认（TUI 原生弹窗；pi-web 经
+  - **comms-qa**：只读面——read + grep/find/ls（知识检索）+ 19 个计算/绘图/诊断域工具 + fetch；无 bash/edit/write/equivalence_check/MATLAB，模型根本没有执行面工具。
+  - **comms-optimize**：全能力面（33 工具，含内建 grep/find/ls 免审批检索），审批门扩展在高危工具执行前弹确认（TUI 原生弹窗；pi-web 经
     `extension_ui_request/response` 透传到浏览器）；每次写入前自动打 git 快照，`/rollback` 一键回退。
   - 新增域工具或 MCP server 时**必须同步 comms-env.sh 的白名单**，否则新工具静默不可见。
 - 密钥只走环境变量；`equivalence_check` 会执行传入命令，已纳入审批门管控。
@@ -62,8 +62,8 @@ real_projects/ModulationPy/   # 优化目标（独立 git 仓库，gitignored）
 ## 验证
 
 ```bash
-scripts/check-runtime.sh --full        # 依赖 + 隔离配置 + 扩展冒烟(16/8/3) + Python 单测(87+11)，离线
-scripts/validate-tool-routing.sh       # 模型端路由验证：16 工具逐个真实调用（走 deepseek，需 .env；--quick 跳过联网/MATLAB 例）
+scripts/check-runtime.sh --full        # 依赖 + 隔离配置 + 扩展冒烟(21/8/3) + Python 单测(106+11)，离线
+scripts/validate-tool-routing.sh       # 模型端路由验证：21 例逐个真实调用（走 deepseek，需 .env；--quick 跳过联网/MATLAB 例）
 scripts/check-real-project.sh          # ModulationPy tests.py（优化闭环的行为等价基线）
 ```
 

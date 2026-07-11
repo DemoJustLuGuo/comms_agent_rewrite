@@ -2,7 +2,7 @@
  * 离线冒烟测试：不起模型会话，直接以 mock ExtensionAPI 加载 comms-tools 扩展，
  * 逐个调用 execute 验证 Python 计算核桥接（bun scripts/dev/smoke_extension.ts）。
  *
- * 覆盖 15 个工具中的 14 个真实调用；online_knowledge 需外网，仅验证注册
+ * 覆盖 20 个工具中的 19 个真实调用；online_knowledge 需外网，仅验证注册
  * （其 provider 解析逻辑由 scripts/tests/test_online_knowledge.py 用 mock 覆盖）。
  */
 import commsTools from "../../.pi/extensions/comms-tools/index"
@@ -21,8 +21,8 @@ const mockPi = {
 
 commsTools(mockPi)
 console.log(`registered ${tools.length} tools: ${tools.map((t) => t.name).join(", ")}`)
-if (tools.length !== 15) {
-  console.log("[FAIL] 期望注册 15 个工具")
+if (tools.length !== 20) {
+  console.log("[FAIL] 期望注册 20 个工具")
   process.exit(1)
 }
 
@@ -42,6 +42,27 @@ const cases: Array<{ tool: string; params: unknown; expect: string }> = [
     expect: "错误", // 域校验失败：退出码 0 + 可读提示
   },
   { tool: "path_loss", params: { model: "hata", freq_mhz: 900, distance_km: 5 }, expect: "路径损耗" },
+  {
+    tool: "rf_chain",
+    params: { mode: "cascade", stages: [{ name: "LNA", gain_db: 15, nf_db: 1.2 }, { name: "Mixer", gain_db: -7, nf_db: 8 }] },
+    expect: "1.72",
+  },
+  {
+    tool: "interference",
+    params: { mode: "ci", carrier_dbm: -80, interferers: [{ power_dbm: -100 }, { power_dbm: -100 }] },
+    expect: "16.99",
+  },
+  { tool: "channel_profile", params: { freq_mhz: 2600, speed_kmh: 120, delay_spread_us: 1.0 }, expect: "相干带宽" },
+  {
+    tool: "fade_margin",
+    params: { mode: "rain", freq_ghz: 23, distance_km: 5, rain_rate_mm_h: 42, polarization: "v" },
+    expect: "雨衰",
+  },
+  {
+    tool: "signal_diagnose",
+    params: { signal: sine.map((v) => v + 0.3), sample_rate_hz: 1000 },
+    expect: "DC 偏置显著",
+  },
   { tool: "ber_snr", params: { modulation: "QPSK", mode: "snr_to_ber", snr_db: 8 }, expect: "BER" },
   { tool: "modulation", params: { mode: "constellation", modulation: "QPSK" }, expect: "星座" },
   { tool: "channel", params: { modulation: "BPSK", snr_db: 6, num_bits: 20000, seed: 1 }, expect: "BER" },
