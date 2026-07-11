@@ -17,6 +17,7 @@
 import json
 import sys
 from pathlib import Path
+from urllib.parse import quote
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
@@ -26,7 +27,9 @@ import matplotlib
 matplotlib.use("Agg")  # 无显示后端，服务器/管道环境可用
 import matplotlib.pyplot as plt
 
-ROOT = Path.cwd()  # 工作区根：.ts 端已把子进程 cwd 设为会话目录；直接跑脚本/测试时为当前目录
+# 工作区根锚定到脚本位置（tools/ 的上一级），不依赖子进程 cwd——
+# pi-web 拉起的 pi 进程 cwd 是 pi-web 包目录，靠 cwd 曾把产物写进 node_modules。
+ROOT = Path(__file__).resolve().parent.parent
 ARTIFACT_PREFIX = "COMM_ARTIFACT: "
 
 
@@ -177,11 +180,19 @@ def main() -> None:
     print(f"已生成图像：{out_path}")
     print(f"类型         : {plot_type}")
     print(f"数据         : {summary}")
+    rel_path = to_workspace_relative(out_path)
+    # Web UI（pi-web）聊天区走 react-markdown 渲染，其 /api/files 端点要求绝对路径
+    # （相对路径会被判 Access denied）；逐段 URL 编码（盘符冒号→%3A，兼容中文文件名）。
+    # TUI 下该行只是普通文本，无副作用。
+    abs_posix = str(Path(out_path).resolve()).replace("\\", "/")
+    encoded = "/".join(quote(seg, safe="") for seg in abs_posix.split("/"))
+    title = payload.get("title") or plot_type
+    print(f"Markdown 内联 : ![{title}](/api/files/{encoded}?type=download)")
     artifact = {
         "version": 1,
         "kind": "image",
         "tool": "plot",
-        "path": to_workspace_relative(out_path),
+        "path": rel_path,
         "mime": "image/png",
         "title": payload.get("title") or plot_type,
         "meta": {

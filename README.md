@@ -21,7 +21,7 @@ scripts/check-runtime.sh --full
 # 3) 启动（三选一）
 scripts/comms-qa.sh          # 问答模式：只读，无 bash/edit/write
 scripts/comms-optimize.sh    # 优化模式：可改码可验证，写入/命令经审批弹窗
-scripts/comms-web.sh         # Web UI：http://127.0.0.1:30190
+scripts/comms-web.sh         # Web UI：http://127.0.0.1:30190（plot 生成的 PNG 在对话内直接内联渲染）
 ```
 
 ## 目录结构

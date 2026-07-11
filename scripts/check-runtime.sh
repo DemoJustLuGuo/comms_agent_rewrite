@@ -69,7 +69,7 @@ bun "$ROOT/scripts/dev/smoke_checkpoint.ts" >/tmp/ck_ckpt.log 2>&1 && ok "回滚
 # 6) --full：完整 Python 单测（106 + 11）
 if [ "${1:-}" = "--full" ]; then
   echo "--- Python 单测（--full）---"
-  "$PYTHON_BIN" -X utf8 "$ROOT/scripts/tests/test_domain_tools.py"    >/tmp/ck_py1.log 2>&1 && ok "域工具单测 106 条" || bad "域工具单测失败（/tmp/ck_py1.log）"
+  "$PYTHON_BIN" -X utf8 "$ROOT/scripts/tests/test_domain_tools.py"    >/tmp/ck_py1.log 2>&1 && ok "域工具单测 107 条" || bad "域工具单测失败（/tmp/ck_py1.log）"
   "$PYTHON_BIN" -X utf8 "$ROOT/scripts/tests/test_online_knowledge.py" >/tmp/ck_py2.log 2>&1 && ok "在线知识单测 11 条" || bad "在线知识单测失败（/tmp/ck_py2.log）"
 fi
 

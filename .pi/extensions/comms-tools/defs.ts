@@ -458,7 +458,8 @@ export const DEFS: CommsToolDef[] = [
     label: "通信绘图",
     description:
       "通信可视化绘图：生成星座图(constellation)、频谱(spectrum)、波形(waveform)、BER 曲线(ber_curve)、眼图(eye) 的 PNG，返回文件路径。图以文件交付，可在 Web UI 查看。",
-    promptSnippet: "需要星座图/频谱/BER 曲线/波形/眼图时调用 plot 生成 PNG，并把返回的文件路径告诉用户。",
+    promptSnippet:
+      "需要星座图/频谱/BER 曲线/波形/眼图时调用 plot 生成 PNG；回复中必须原样包含工具输出的「Markdown 内联」图片行（Web 界面内联显示），并告知文件路径。",
     parameters: Type.Object({
       plot_type: StringEnum(["constellation", "spectrum", "waveform", "ber_curve", "eye"], { description: "图类型" }),
       title: Type.Optional(Type.String({ description: "图标题" })),

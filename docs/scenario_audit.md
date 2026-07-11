@@ -33,3 +33,18 @@ validate-tool-routing.sh（21 例）、check-runtime.sh 计数、README。
 
 - **协议分析深化**：等出现真实的吞吐/时延预算或 ARQ 分析需求；届时优先做 throughput/latency 估算工具而非协议状态机。
 - **长期记忆 / 本地 RAG**：等 qa 模式的 grep/read 检索在实际使用中出现召回不足的具体案例。
+
+## GUI：对话内图片内联渲染（2026-07-11，零 fork）
+
+调研结论：pi-web 聊天区用 react-markdown 渲染助手消息，且未覆写/禁用 `img` 元素——
+`![标题](/api/files/<绝对路径逐段URL编码>?type=download)` 即可内联显示（其 files API
+只认绝对路径，相对路径 403；A4 已证 PNG 经该端点 200 image/png）。据此**不 fork**，改两处：
+
+1. `tools/plot.py`：①ROOT 锚定脚本位置（曾因 pi-web 拉起的 pi 进程 cwd=pi-web 包目录，
+   把 PNG 写进 node_modules）；②输出新增「Markdown 内联」行，含现成的图片 markdown（盘符
+   冒号编码为 %3A，兼容中文文件名）；TUI 下该行为普通文本无副作用。
+2. `defs.ts` plot promptSnippet：要求模型回复中原样携带该行。
+   `runner.ts` 同时把子进程 cwd 固定为项目根（其余相对路径工具在 pi-web 下同样受益）。
+
+E2E 实证：pi-web 会话内模型画图 → PNG 落项目 plots/ → 助手回复携带 markdown 图片行 →
+该 URL 返回 200 image/png（浏览器端由 react-markdown 默认 img 渲染内联）。

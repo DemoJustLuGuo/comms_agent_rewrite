@@ -68,7 +68,9 @@ export function runPyTool(
     let child: ReturnType<typeof spawn>
     try {
       child = spawn(resolvePython(), argv, {
-        cwd: process.cwd(), // 会话目录：相对路径参数与 plots/ 产物按它解析
+        // 固定项目根为子进程 cwd：pi-web 拉起的 pi 进程 cwd 是 pi-web 包目录
+        // （曾把 plots/ 产物写进 node_modules），TUI 下也恒等于项目根，行为一致。
+        cwd: PROJECT_ROOT,
         stdio: ["pipe", "pipe", "pipe"],
         windowsHide: true,
       })

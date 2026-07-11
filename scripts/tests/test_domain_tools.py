@@ -319,6 +319,24 @@ class PlotTests(unittest.TestCase):
         self.assertEqual(artifact["path"], "plots/_test_constellation.png")
         self.assertEqual(artifact["mime"], "image/png")
         self.assertEqual(artifact["meta"]["plot_type"], "constellation")
+        # Web UI 内联行：绝对路径、盘符冒号已编码（pi-web /api/files 只认绝对路径）
+        md_line = next((l for l in r.stdout.splitlines() if l.startswith("Markdown 内联")), "")
+        self.assertIn("](/api/files/", md_line)
+        self.assertIn("%3A", md_line)
+        self.assertIn("_test_constellation.png?type=download)", md_line)
+
+    def test_cwd_independent_output(self):
+        # pi-web 下 pi 进程 cwd 是 pi-web 包目录——plot 必须锚定项目根，不随 cwd 漂移
+        r = subprocess.run(
+            [sys.executable, "-X", "utf8", str(TOOLS_DIR / "plot.py")],
+            input=json.dumps({"plot_type": "constellation", "i": [1], "q": [1],
+                              "output_path": "plots/_test_cwd_anchor.png"}),
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=30, cwd=tempfile.gettempdir())
+        self.assertEqual(r.returncode, 0, r.stderr)
+        out = PROJECT_ROOT / "plots" / "_test_cwd_anchor.png"
+        self.assertTrue(out.exists() and out.stat().st_size > 0)
+        out.unlink()
 
     def test_ber_curve_series(self):
         out = PROJECT_ROOT / "plots" / "_test_ber_curve.png"
