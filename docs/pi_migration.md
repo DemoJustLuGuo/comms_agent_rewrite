@@ -51,7 +51,7 @@ pi-web 集成形态：spawn 自带打包的 pi（RPC 模式），不用项目 pi
 | opencode 内建 | pi 平替 | 状态 |
 |---|---|---|
 | `webfetch`（ask 门控） | 官方 MCP fetch server（`uvx mcp-server-fetch`）经 pi-mcp-extension 挂载，注册为 `mcp_fetch_fetch`，自动落审批门 `mcp_` 前缀 | ✅ 已落地，E2E 实测抓取 example.com 成功；审批语义与旧栈 `webfetch: ask` 精确对齐 |
-| `grep` / `glob` / `list` | **pi 原生就有** `grep`/`find`/`ls` 内建工具，默认未启用；`--tools` 白名单可点亮（实测模型自报可用） | ✅ 机制实证；启用方式待定（建议双模式改 `--tools` 正向白名单，顺带让 qa 获得知识检索能力） |
+| `grep` / `glob` / `list` | **pi 原生就有** `grep`/`find`/`ls` 内建工具，默认未启用 | ✅ 已落地（2026-07-11）：双模式启动脚本改为 `--tools` 正向白名单（清单集中 comms-env.sh），qa 获得知识检索能力、optimize 的 grep 免审批；模型端自报工具面 qa 19 个 / optimize 28 个精确匹配 |
 | `todowrite` / `todoread` | 官方示例 `examples/extensions/todo.ts`（297 行，拷入 .pi/extensions 即用） | 📦 备选未装（当前工作流未用到） |
 | `task`（子代理） | 官方示例 `examples/extensions/subagent/`（完整包结构） | 📦 备选未装（旧栈也未启用） |
 | `patch` | pi 的 `edit` 覆盖 | — 无需 |
@@ -89,5 +89,5 @@ pi-web 集成形态：spawn 自带打包的 pi（RPC 模式），不用项目 pi
 
 - ~~B5 MATLAB 工具~~（2026-07-10 已完成，见 Phase B 交付）；
 - pi / pi-web / pi-mcp-extension 升级流程：改 package.json / .pi/settings.json 版本 → `bun install` 或 `pi update` → `scripts/check-runtime.sh --full` 全绿才算升级完成；
-- 新增 MCP server 时：写 `.pi/mcp.json` → 审批门自动覆盖（`mcp_` 前缀）→ **同步 comms-qa.sh 的排除名单**（只读边界靠精确工具名）；
+- 新增 MCP server 或域工具时：写 `.pi/mcp.json` / `defs.ts` → 审批门自动覆盖（`mcp_` 前缀）→ **同步 `scripts/comms-env.sh` 的 `--tools` 白名单**（pi 的 `--tools` 全局过滤，不进名单的工具在双模式下静默不可见）；
 - knowledge/ 扩充与检索召回评测（旧栈遗留课题，与运行时无关）。

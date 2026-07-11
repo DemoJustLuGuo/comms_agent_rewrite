@@ -6,6 +6,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=/dev/null
 . "$SCRIPT_DIR/comms-env.sh"
 
+# 正向白名单（清单集中维护在 comms-env.sh 的 COMMS_OPTIMIZE_TOOLS）：
+# 相比默认工具面多点亮 grep/find/ls 内建只读检索（免审批）。
 exec "$ROOT/node_modules/.bin/pi" --approve \
+  --tools "$COMMS_OPTIMIZE_TOOLS" \
   --append-system-prompt "$ROOT_W/config/prompts/optimize-mode.md" \
   "$@"

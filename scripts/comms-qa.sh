@@ -6,11 +6,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=/dev/null
 . "$SCRIPT_DIR/comms-env.sh"
 
-# MATLAB MCP 工具名单与 .pi/mcp.json 的 matlab server 对应（mcp_<server>_<tool>）。
-# 新增 MCP server / server 工具变化时，需同步此排除名单（qa 是只读边界，禁一切执行面）。
-MATLAB_TOOLS="mcp_matlab_check_matlab_code,mcp_matlab_detect_matlab_toolboxes,mcp_matlab_evaluate_matlab_code,mcp_matlab_run_matlab_file,mcp_matlab_run_matlab_test_file"
-
+# 正向白名单（清单集中维护在 comms-env.sh 的 COMMS_QA_TOOLS）：
+# 只读边界靠"名单里没有执行面工具"保证——未来新增工具默认不进 qa，比黑名单更安全。
 exec "$ROOT/node_modules/.bin/pi" --approve \
-  --exclude-tools "bash,edit,write,equivalence_check,$MATLAB_TOOLS" \
+  --tools "$COMMS_QA_TOOLS" \
   --append-system-prompt "$ROOT_W/config/prompts/qa-mode.md" \
   "$@"

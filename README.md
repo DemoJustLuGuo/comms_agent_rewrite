@@ -52,9 +52,11 @@ real_projects/ModulationPy/   # 优化目标（独立 git 仓库，gitignored）
 
 ## 双模式与安全
 
-- **comms-qa**：启动时 `--exclude-tools bash,edit,write,equivalence_check`——能力级隔离，模型根本没有写工具。
-- **comms-optimize**：全部工具可用，但审批门扩展在执行前弹确认（TUI 原生弹窗；pi-web 经
-  `extension_ui_request/response` 透传到浏览器）；每次写入前自动打 git 快照，`/rollback` 一键回退。
+- **双模式均为 `--tools` 正向白名单**（清单集中在 `scripts/comms-env.sh`；pi 的 `--tools` 全局过滤内建/扩展/MCP 工具）：
+  - **comms-qa**：只读面——read + grep/find/ls（知识检索）+ 14 个计算/绘图域工具 + fetch；无 bash/edit/write/equivalence_check/MATLAB，模型根本没有执行面工具。
+  - **comms-optimize**：全能力面（28 工具，含内建 grep/find/ls 免审批检索），审批门扩展在高危工具执行前弹确认（TUI 原生弹窗；pi-web 经
+    `extension_ui_request/response` 透传到浏览器）；每次写入前自动打 git 快照，`/rollback` 一键回退。
+  - 新增域工具或 MCP server 时**必须同步 comms-env.sh 的白名单**，否则新工具静默不可见。
 - 密钥只走环境变量；`equivalence_check` 会执行传入命令，已纳入审批门管控。
 
 ## 验证

@@ -42,6 +42,23 @@ export MSYS2_ARG_CONV_EXCL="*"
 . "$SCRIPT_DIR/venv-python.sh"
 set_comms_python_bin
 
+# ---- 工具白名单（--tools 正向白名单）----
+# pi 的 --tools 是全局 allowlist：内建、扩展、MCP 工具全部经它过滤（源码
+# agent-session.js _refreshToolRegistry / isAllowedTool），不在名单里的工具即使
+# 注册也不会出现。因此新增域工具（defs.ts）或 MCP server（.pi/mcp.json）后，
+# 必须同步下面的清单，否则新工具在双模式下静默不可见。
+#
+# 内建工具共 7 个：read/bash/edit/write（默认启用）+ grep/find/ls（默认关闭，
+# 白名单点亮，qa 靠它们检索 knowledge/）。
+COMMS_DOMAIN_TOOLS="link_budget,path_loss,ber_snr,modulation,channel,channel_coding,capacity,pulse_shaping,ofdm,signal_analysis,frame_parser,comms_lint,online_knowledge,plot"
+# equivalence_check 单列：会执行传入命令，qa 禁用、optimize 过审批门
+COMMS_MATLAB_TOOLS="mcp_matlab_check_matlab_code,mcp_matlab_detect_matlab_toolboxes,mcp_matlab_evaluate_matlab_code,mcp_matlab_run_matlab_file,mcp_matlab_run_matlab_test_file"
+COMMS_FETCH_TOOLS="mcp_fetch_fetch"
+# qa：只读检索 + 计算/绘图域工具 + 网页抓取（fetch 过审批门）；无 bash/edit/write/等价校验/MATLAB
+COMMS_QA_TOOLS="read,grep,find,ls,$COMMS_DOMAIN_TOOLS,$COMMS_FETCH_TOOLS"
+# optimize：全能力面（grep/find/ls 免审批检索；bash/edit/write/equivalence_check/MCP 过审批门）
+COMMS_OPTIMIZE_TOOLS="read,bash,edit,write,grep,find,ls,$COMMS_DOMAIN_TOOLS,equivalence_check,$COMMS_FETCH_TOOLS,$COMMS_MATLAB_TOOLS"
+
 # models.json：按模板生成（baseUrl 来自 .env；apiKey 保持 $OPENAI_API_KEY 引用，不落盘）
 if [ ! -f "$ROOT/agent-home/models.json" ]; then
   bun -e 'const fs=require("fs");const t=JSON.parse(fs.readFileSync("config/models.template.json","utf8"));t.providers["comms-gateway"].baseUrl=process.env.OPENAI_BASE_URL;fs.writeFileSync("agent-home/models.json",JSON.stringify(t,null,2));' \
