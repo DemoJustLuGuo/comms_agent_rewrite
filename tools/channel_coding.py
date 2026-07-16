@@ -33,8 +33,11 @@ from modulation import BITS_PER_SYMBOL, build_constellation, modulate_bits, demo
 
 MAX_CONV_BITS = 20_000       # conv 纯 Python Viterbi 慢，限制每点比特数
 MAX_BLOCK_BITS = 200_000     # hamming/rs 快，可放宽
+MAX_ITER_BITS = 40_000       # ldpc/turbo（BP/BCJR 迭代）介于两者之间
 DEFAULT_EBN0 = [2.0, 4.0, 6.0]
 CONV_TB_DEPTH = 30           # 回溯深度 ≈ 5×memory
+LDPC_BP_ITERS = 20           # LDPC 置信传播迭代次数
+TURBO_ITERS = 6              # Turbo BCJR 迭代次数
 
 # Hamming(7,4) 系统式生成矩阵 G=[I4|P] 与校验矩阵 H=[Pᵀ|I3]
 _HAMMING_P = np.array([[1, 1, 0], [1, 0, 1], [0, 1, 1], [1, 1, 1]], dtype=int)  # 4×3
@@ -63,6 +66,125 @@ def _load_reedsolo():
         return reedsolo
     except Exception:
         return None
+
+
+def _load_turbo():
+    """Turbo：commpy 的 turbo_encode/turbo_decode/map_decode + RSC Trellis + 交织器。"""
+    try:
+        from commpy.channelcoding import Trellis, turbo_encode, turbo_decode
+        from commpy.channelcoding.interleavers import RandInterlv
+        return Trellis, turbo_encode, turbo_decode, RandInterlv
+    except Exception:
+        return None
+
+
+def _load_ldpc():
+    """LDPC：commpy 的 get_ldpc_code_params / 系统式编码 / BP 译码，用其自带 WiMAX 设计文件。"""
+    try:
+        from commpy.channelcoding import (
+            build_matrix,
+            get_ldpc_code_params,
+            ldpc_bp_decode,
+            triang_ldpc_systematic_encode,
+        )
+        return build_matrix, get_ldpc_code_params, ldpc_bp_decode, triang_ldpc_systematic_encode
+    except Exception:
+        return None
+
+
+def _load_polar():
+    """Polar：polarcodes 第三方库（Brendon McBain）——PolarCode 对象 + Construct/Encode/Decode。
+
+    该库 API 有状态且版本敏感，全部调用点包 try/except，API 不符时返回清晰错误而非乱码。
+    """
+    try:
+        from polarcodes import PolarCode, Construct, Encode, Decode
+        return PolarCode, Construct, Encode, Decode
+    except Exception:
+        return None
+
+
+def _ldpc_design_file():
+    """定位 commpy 自带的 WiMAX LDPC 设计文件（rate-1/2，960×720 → K=480,N=960）。
+
+    随包分发，无需项目内 bundling；找不到时返回 None（由调用方给出清晰引导）。
+    """
+    try:
+        import commpy.channelcoding as cc
+        base = Path(cc.__file__).resolve().parent / "designs" / "ldpc" / "wimax"
+        # 1440.720 = N1440/K720 → rate-1/2（与 ldpc_wimax_r12 命名一致，首选）；
+        # 960.720.a = N960/K720 → rate-3/4（次选兜底，rate 由运行时按块长实算）。
+        for name in ("1440.720.txt", "960.720.a.txt"):
+            f = base / name
+            if f.exists():
+                return str(f)
+    except Exception:
+        pass
+    return None
+
+
+def _read_ldpc_params_compat(design_file, build_matrix, compute_matrix=False):
+    """读取 CommPy LDPC 设计文件，兼容 NumPy 2 的单元素数组标量赋值规则。"""
+    with open(design_file, encoding="utf-8") as stream:
+        n_vnodes, n_cnodes = (int(x) for x in stream.readline().split())
+        max_vnode_deg, max_cnode_deg = (int(x) for x in stream.readline().split())
+        vnode_deg_list = np.asarray([int(x) for x in stream.readline().split()], dtype=np.int32)
+        cnode_deg_list = np.asarray([int(x) for x in stream.readline().split()], dtype=np.int32)
+
+        vnode_adj_list = -np.ones((n_vnodes, max_vnode_deg), dtype=np.int32)
+        cnode_adj_list = -np.ones((n_cnodes, max_cnode_deg), dtype=np.int32)
+
+        for vnode in range(n_vnodes):
+            neighbors = np.asarray([int(x) - 1 for x in stream.readline().split()], dtype=np.int32)
+            vnode_adj_list[vnode, :vnode_deg_list[vnode]] = neighbors
+        for cnode in range(n_cnodes):
+            neighbors = np.asarray([int(x) - 1 for x in stream.readline().split()], dtype=np.int32)
+            cnode_adj_list[cnode, :cnode_deg_list[cnode]] = neighbors
+
+    cnode_vnode_map = -np.ones((n_cnodes, max_cnode_deg), dtype=np.int32)
+    vnode_cnode_map = -np.ones((n_vnodes, max_vnode_deg), dtype=np.int32)
+    for cnode in range(n_cnodes):
+        for i, vnode in enumerate(cnode_adj_list[cnode, :cnode_deg_list[cnode]]):
+            matches = np.flatnonzero(vnode_adj_list[vnode, :] == cnode)
+            if matches.size != 1:
+                raise ValueError("LDPC 设计文件中的校验节点映射不唯一。")
+            cnode_vnode_map[cnode, i] = int(matches[0])
+    for vnode in range(n_vnodes):
+        for i, cnode in enumerate(vnode_adj_list[vnode, :vnode_deg_list[vnode]]):
+            matches = np.flatnonzero(cnode_adj_list[cnode, :] == vnode)
+            if matches.size != 1:
+                raise ValueError("LDPC 设计文件中的变量节点映射不唯一。")
+            vnode_cnode_map[vnode, i] = int(matches[0])
+
+    params = {
+        "n_vnodes": n_vnodes,
+        "n_cnodes": n_cnodes,
+        "max_vnode_deg": max_vnode_deg,
+        "max_cnode_deg": max_cnode_deg,
+        "vnode_deg_list": vnode_deg_list,
+        "cnode_deg_list": cnode_deg_list,
+        "vnode_adj_list": vnode_adj_list.ravel(),
+        "cnode_adj_list": cnode_adj_list.ravel(),
+        "vnode_cnode_map": vnode_cnode_map.ravel(),
+        "cnode_vnode_map": cnode_vnode_map.ravel(),
+    }
+    if compute_matrix:
+        build_matrix(params)
+    return params
+
+
+def _get_ldpc_params(get_params, build_matrix, design_file, compute_matrix=False):
+    try:
+        return get_params(design_file, compute_matrix=compute_matrix)
+    except (TypeError, ValueError) as exc:
+        message = str(exc)
+        numpy_scalar_error = (
+            "setting an array element with a sequence" in message
+            or "0-dimensional arrays can be converted to Python scalars" in message
+        )
+        if not numpy_scalar_error:
+            raise
+        return _read_ldpc_params_compat(design_file, build_matrix, compute_matrix)
 
 
 # ---------------- 信道与软量度 ----------------
@@ -188,6 +310,154 @@ def run_rs(info_bits, modulation, channel, ebn0_db, decision, rng):
     return errors, rate
 
 
+def run_ldpc(info_bits, modulation, channel, ebn0_db, decision, rng):
+    """WiMAX rate-1/2 LDPC（commpy 自带设计文件）：系统式编码 → 软 LLR → BP(MSA) 译码。
+
+    commpy 约定：triang_ldpc_systematic_encode 每块列向排布（order='F'），系统位在前；
+    ldpc_bp_decode 收 LLR（正 ↔ 比特 0，见其 signbit 判决），返回 (dec_word, out_llrs)
+    每块一列。这里用整块 LLR（软判决），硬判决请求也走软 LLR（LDPC 无实用硬判解码）。
+    """
+    loaded = _load_ldpc()
+    if loaded is None:
+        return None
+    build_matrix, get_params, bp_decode, sys_encode = loaded
+    design = _ldpc_design_file()
+    if design is None:
+        return "NO_LDPC_DESIGN", 0.5
+    params = _get_ldpc_params(get_params, build_matrix, design, compute_matrix=False)
+    n_vnodes = params["n_vnodes"]          # 码字块长 N
+    n_cnodes = params["n_cnodes"]          # 校验数
+    k_block = n_vnodes - n_cnodes          # 信息位块长 K（满秩校验时）
+    rate = k_block / n_vnodes
+
+    n_blocks = info_bits.size // k_block
+    if n_blocks < 1:
+        return "TOO_FEW_BITS_LDPC", rate
+    info = info_bits[:n_blocks * k_block]
+    build_matrix(params)
+
+    total_err = 0
+    for b in range(n_blocks):
+        msg = info[b * k_block:(b + 1) * k_block]
+        coded = np.asarray(sys_encode(msg, params, pad=False), dtype=int).reshape(-1)  # 系统位在前
+        symbols, n_coded, k_mod = _modulate_padded(coded, modulation)
+        rx = make_noise_and_channel(symbols, k_mod, rate, ebn0_db, channel, rng)
+        # commpy LLR 约定：正值 ↔ 比特 0（signbit 判决），与 soft_llr 的「正↔1」相反 → 取负
+        llr = -soft_llr(rx, modulation)[:n_coded]
+        dec_word, _ = bp_decode(llr.astype(float), params, "MSA", LDPC_BP_ITERS)
+        dec_word = np.asarray(dec_word, dtype=int).reshape(-1)[:k_block]  # 系统位即前 K 位
+        total_err += int(np.sum(dec_word != msg))
+    return total_err, rate
+
+
+def run_turbo(info_bits, modulation, channel, ebn0_db, decision, rng):
+    """rate-1/3 并行级联 Turbo（commpy）：两个 RSC(7) 分量码 + 随机交织，BCJR 迭代译码。
+
+    commpy turbo_decode 收 BPSK 符号量度（+1/-1 域，噪声方差归一），故本码型固定按
+    BPSK 承载（modulation 参数对 turbo 不生效，报告中注明）。返回信息比特误码数。
+    """
+    loaded = _load_turbo()
+    if loaded is None:
+        return None
+    Trellis, turbo_encode, turbo_decode, RandInterlv = loaded
+    # RSC K=4（memory=3, 07/05 八进制，反馈 07）——commpy 教程标准分量码
+    memory = np.array([3])
+    g_matrix = np.array([[0o7, 0o5]])
+    trellis = Trellis(memory, g_matrix, feedback=0o7, code_type="rsc")
+
+    block = 1000  # 每个交织块信息比特数（含尾比特开销，rate≈1/3）
+    n_blocks = info_bits.size // block
+    if n_blocks < 1:
+        return "TOO_FEW_BITS_TURBO", 1.0 / 3.0
+    info = info_bits[:n_blocks * block]
+    rate = 1.0 / 3.0  # 三路输出（系统 + 两校验），忽略尾比特微小开销
+
+    # Turbo 译码器按 BPSK 符号量度工作，本码型固定 BPSK 承载（忽略传入 modulation）
+    mod_turbo = "BPSK"
+    total_err = 0
+    for b in range(n_blocks):
+        msg = info[b * block:(b + 1) * block]
+        interleaver = RandInterlv(msg.size, seed=int(ebn0_db * 100) + b)
+        sys_s, par1, par2 = turbo_encode(msg, trellis, trellis, interleaver)
+        # 三路比特拼接调制过信道，再拆回三路软量度（BPSK 域 ±1 + 噪声）
+        coded = np.concatenate([sys_s, par1, par2]).astype(int)
+        symbols, n_coded, k_mod = _modulate_padded(coded, mod_turbo)
+        rx = make_noise_and_channel(symbols, k_mod, rate, ebn0_db, channel, rng)
+        # turbo_decode 要 BPSK 符号量度（commpy 约定 bit→2b-1，即 bit0→-1、bit1→+1）；
+        # 本项目 BPSK 星座相反（bit0→+1、bit1→-1），故取实部后取负对齐 commpy 约定。
+        rx_bits_soft = -np.real(rx)[:n_coded]
+        ls = sys_s.size
+        sys_r = rx_bits_soft[:ls]
+        par1_r = rx_bits_soft[ls:2 * ls]
+        par2_r = rx_bits_soft[2 * ls:3 * ls]
+        ebn0_lin = 10.0 ** (ebn0_db / 10.0)
+        n0 = 1.0 / (k_mod * rate * ebn0_lin)
+        decoded = turbo_decode(sys_r, par1_r, par2_r, trellis, n0 / 2.0, TURBO_ITERS, interleaver)
+        decoded = np.asarray(decoded, dtype=int).reshape(-1)
+        # 长度对齐（防 commpy 尾比特处理导致的 off-by-one）：按较短者比对
+        m = min(decoded.size, msg.size)
+        total_err += int(np.sum(decoded[:m] != msg[:m]))
+    return total_err, rate
+
+
+def run_polar(info_bits, modulation, channel, ebn0_db, decision, rng):
+    """rate-1/2 Polar 码（polarcodes 库，N=256/K=128）：SC 译码。
+
+    polarcodes 的 API 有状态且各版本略有差异——本 runner 走该库自带的
+    Construct→set_message→Encode→AWGN→Decode 端到端管路，让 LLR 的符号/尺度约定
+    留在库内部自洽，不外部构造软量度（避免猜错译码器输入约定）。
+    modulation 参数对 polar 不生效（库内固定 BPSK+AWGN），报告中注明；返回信息比特误码数。
+    """
+    loaded = _load_polar()
+    if loaded is None:
+        return None
+    PolarCode, Construct, Encode, Decode = loaded
+
+    N, K = 256, 128           # 码长/信息位（rate-1/2）
+    rate = K / N
+    design_snr = 5.0          # Bhattacharyya/GA 构造用的设计 SNR（dB），常用工程默认
+    block = K
+    n_blocks = info_bits.size // block
+    if n_blocks < 1:
+        return "TOO_FEW_BITS_POLAR", rate
+
+    info = info_bits[:n_blocks * block]
+    # polarcodes 的 AWGN 以 Eb/N0（dB）参数化，与本工具 Eb/N0 口径一致；库内部按码率归一。
+    total_err = 0
+    try:
+        for b in range(n_blocks):
+            msg = info[b * block:(b + 1) * block].astype(int)
+            pc = PolarCode(N, K)
+            pc.construction_type = "bb"        # Bhattacharyya 参数构造
+            Construct(pc, design_snr)
+            pc.set_message(msg)
+            Encode(pc)
+            pc.simulation_snr = float(ebn0_db)  # 该点 Eb/N0
+            # 库自带 AWGN 调制/加噪（BPSK），写入 pc.likelihoods 供 SC 译码
+            pc.AWGN() if hasattr(pc, "AWGN") else _polar_awgn_fallback(pc, ebn0_db, rate, rng)
+            Decode(pc)
+            decoded = np.asarray(pc.message_received, dtype=int).reshape(-1)
+            m = min(decoded.size, msg.size)
+            total_err += int(np.sum(decoded[:m] != msg[:m]))
+    except (AttributeError, TypeError, ValueError, KeyError) as e:
+        # API 不符（版本差异/字段改名）→ 清晰错误而非乱码
+        return ("POLAR_API", str(e))
+    return total_err, rate
+
+
+def _polar_awgn_fallback(pc, ebn0_db, rate, rng):
+    """polarcodes 版本无 AWGN() 方法时的兜底：按库的 likelihoods 约定手动加噪。
+
+    仅在库缺该方法时触发；若字段约定也不符，外层 except 会捕获转 POLAR_API 错误。
+    """
+    x = np.asarray(pc.x, dtype=float)          # 编码后比特（库内字段）
+    bpsk = 1.0 - 2.0 * x                        # 0→+1, 1→-1（polarcodes BPSK 约定）
+    ebn0_lin = 10.0 ** (ebn0_db / 10.0)
+    sigma = math.sqrt(1.0 / (2.0 * rate * ebn0_lin))
+    y = bpsk + sigma * rng.standard_normal(bpsk.size)
+    pc.likelihoods = (2.0 * y / (sigma ** 2)).astype(float)
+
+
 def run_uncoded(info_bits, modulation, channel, ebn0_db, rng):
     symbols, n_coded, k_mod = _modulate_padded(info_bits, modulation)
     rx = make_noise_and_channel(symbols, k_mod, 1.0, ebn0_db, channel, rng)  # rate=1
@@ -195,9 +465,12 @@ def run_uncoded(info_bits, modulation, channel, ebn0_db, rng):
     return int(np.sum(bits_rx != info_bits))
 
 
-CODE_RUNNERS = {"conv_k7_r12": run_conv, "hamming_7_4": run_hamming, "rs_255_223": run_rs}
+CODE_RUNNERS = {"conv_k7_r12": run_conv, "hamming_7_4": run_hamming, "rs_255_223": run_rs,
+                "ldpc_wimax_r12": run_ldpc, "turbo_r13": run_turbo, "polar_sc_r12": run_polar}
 CODE_LABELS = {"conv_k7_r12": "卷积码 K=7 rate-1/2 (133/171)",
-               "hamming_7_4": "Hamming(7,4)", "rs_255_223": "Reed-Solomon(255,223)"}
+               "hamming_7_4": "Hamming(7,4)", "rs_255_223": "Reed-Solomon(255,223)",
+               "ldpc_wimax_r12": "LDPC WiMAX rate-1/2 (N1440,K720)", "turbo_r13": "Turbo rate-1/3 (RSC K=4 ×2)",
+               "polar_sc_r12": "Polar SC rate-1/2 (N256,K128)"}
 
 
 def coding_gain_db(ebn0_list, ber_coded, ber_uncoded, target):
@@ -220,7 +493,8 @@ def main() -> None:
     payload = load_payload()
     code = payload.get("code", "")
     if code not in CODE_RUNNERS:
-        print(f"错误：不支持的 code '{code}'。可选：conv_k7_r12 | hamming_7_4 | rs_255_223。")
+        print(f"错误：不支持的 code '{code}'。可选："
+              "conv_k7_r12 | hamming_7_4 | rs_255_223 | ldpc_wimax_r12 | turbo_r13 | polar_sc_r12。")
         return
     modulation = payload.get("modulation", "")
     if modulation not in BITS_PER_SYMBOL:
@@ -250,7 +524,13 @@ def main() -> None:
         print("错误：ebn0_db 元素必须是数字。")
         return
 
-    cap = MAX_CONV_BITS if code == "conv_k7_r12" else MAX_BLOCK_BITS
+    # LDPC BP / Turbo BCJR / Polar SC 为纯 Python 迭代/递归译码，比卷积码更重 → 更严的比特上限。
+    if code in ("ldpc_wimax_r12", "turbo_r13", "polar_sc_r12"):
+        cap = MAX_ITER_BITS
+    elif code == "conv_k7_r12":
+        cap = MAX_CONV_BITS
+    else:
+        cap = MAX_BLOCK_BITS
     num_bits = min(int(payload.get("num_bits", 4000)), cap)
     if num_bits < 8:
         print("错误：num_bits 太小。")
@@ -266,24 +546,43 @@ def main() -> None:
         info = rng.integers(0, 2, num_bits)
         result = runner(info, modulation, channel, ebn0, decision, rng)
         if result is None:
-            # scikit-commpy（卷积码）/ reedsolo（RS）为硬依赖，正常经 `uv sync` 装齐；
-            # 直接运行脚本而未装依赖时给出清晰引导，不再作为「可选降级」。
-            print("错误：本工具依赖 scikit-commpy（卷积码）/ reedsolo（RS）。"
+            # scikit-commpy（卷积/LDPC/Turbo）/ reedsolo（RS）/ polarcodes（Polar）为硬依赖，
+            # 正常经 `uv sync` 装齐；直接运行脚本而未装依赖时给出清晰引导，不再作为「可选降级」。
+            print("错误：本工具依赖 scikit-commpy（卷积/LDPC/Turbo）/ reedsolo（RS）/ "
+                  "py-polar-codes（Polar，导入名 polarcodes）。"
                   "请在 comms-agent 目录执行 `uv sync`（或 pip install -r requirements.txt）后重试。")
             return
         n_err, rate = result
+        if n_err == "POLAR_API":
+            print(f"错误：py-polar-codes 库 API 与本工具预期不符（可能版本差异）：{rate}。"
+                  "请核对已装 py-polar-codes 版本，或在 issue 中反馈以对齐调用约定。")
+            return
+        if n_err in ("TOO_FEW_BITS_LDPC", "TOO_FEW_BITS_TURBO", "TOO_FEW_BITS_POLAR"):
+            need = {"TOO_FEW_BITS_LDPC": "720（1 个 LDPC 块）",
+                    "TOO_FEW_BITS_TURBO": "1000（1 个 Turbo 交织块）",
+                    "TOO_FEW_BITS_POLAR": "128（1 个 Polar 块 K=128）"}[n_err]
+            print(f"错误：{CODE_LABELS[code]} 每点至少需要 {need} 信息比特。请增大 num_bits。")
+            return
+        if n_err == "NO_LDPC_DESIGN":
+            print("错误：未找到 commpy 自带的 WiMAX LDPC 设计文件（designs/ldpc/wimax/）。"
+                  "请确认 scikit-commpy 完整安装（uv sync）。")
+            return
         if n_err == "TOO_FEW_BITS":
             print(f"错误：rs_255_223 每点至少需要 {223 * 8} 比特（1 个 RS 块）。请增大 num_bits。")
             return
         rate_used = rate
-        n_unc = run_uncoded(info, modulation, channel, ebn0, rng)
+        # turbo/polar 内部固定 BPSK 承载：未编码基线也须用 BPSK，否则编码增益口径错配
+        unc_mod = "BPSK" if code in ("turbo_r13", "polar_sc_r12") else modulation
+        n_unc = run_uncoded(info, unc_mod, channel, ebn0, rng)
         bc = n_err / info.size
         bu = n_unc / info.size
         ber_coded.append(bc)
         ber_uncoded.append(bu)
         rows.append((ebn0, bu, bc))
 
-    print(f"=== 信道编码仿真：{CODE_LABELS[code]} / {modulation} / {channel} ===")
+    eff_mod = "BPSK" if code in ("turbo_r13", "polar_sc_r12") else modulation
+    mod_note = f"{eff_mod}（该码固定 BPSK 承载）" if eff_mod != modulation else eff_mod
+    print(f"=== 信道编码仿真：{CODE_LABELS[code]} / {mod_note} / {channel} ===")
     print(f"码率 R       : {rate_used:.4f}（信息比特/编码比特）")
     print(f"判决         : {decision}{soft_note}")
     print(f"每点比特数   : {num_bits}（信息比特）")

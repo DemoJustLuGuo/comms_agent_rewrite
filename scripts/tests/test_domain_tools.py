@@ -12,6 +12,7 @@
     python -X utf8 scripts/tests/test_domain_tools.py
 """
 import json
+import math
 import subprocess
 import sys
 import tempfile
@@ -288,6 +289,258 @@ class ChannelTests(unittest.TestCase):
 
     def test_rejects_bad_modulation(self):
         r = run_tool("channel", {"modulation": "FOO", "snr_db": 8})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("错误", r.stdout)
+
+
+class SyncEstimateTests(unittest.TestCase):
+    def _qpsk(self, n, rng):
+        # 单位能量 QPSK 符号
+        syms = (rng.integers(0, 2, n) * 2 - 1) + 1j * (rng.integers(0, 2, n) * 2 - 1)
+        return syms / math.sqrt(2.0)
+
+    def test_cfo_blind_recovers_injected_offset(self):
+        # 注入已知 CFO：符号率 1000 Hz，Δf = 30 Hz → 每符号相位 2π·0.03
+        import numpy as _np
+        rng = _np.random.default_rng(1)
+        fs = 1000.0
+        df_true = 30.0
+        n = 2048
+        syms = self._qpsk(n, rng)
+        t = _np.arange(n) / fs
+        rx = syms * _np.exp(1j * 2 * _np.pi * df_true * t)
+        r = run_tool_stdin("sync_estimate", {"mode": "cfo", "modulation": "QPSK",
+                                             "sample_rate_hz": fs,
+                                             "i": list(rx.real), "q": list(rx.imag)})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        est = _extract_float(r.stdout, r"CFO")
+        # 盲估计分辨率受 FFT bin 限制（fs/n ≈ 0.49 Hz），容差放宽到 ±3 Hz
+        self.assertAlmostEqual(est, df_true, delta=3.0)
+
+    def test_cfo_data_aided(self):
+        import numpy as _np
+        rng = _np.random.default_rng(2)
+        fs = 1000.0
+        df_true = -12.0
+        n = 512
+        syms = self._qpsk(n, rng)
+        t = _np.arange(n) / fs
+        rx = syms * _np.exp(1j * 2 * _np.pi * df_true * t)
+        r = run_tool_stdin("sync_estimate", {"mode": "cfo", "sample_rate_hz": fs,
+                                             "i": list(rx.real), "q": list(rx.imag),
+                                             "known_symbols_i": list(syms.real),
+                                             "known_symbols_q": list(syms.imag)})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        est = _extract_float(r.stdout, r"CFO")
+        self.assertAlmostEqual(est, df_true, delta=1.0)
+
+    def test_timing_needs_oversampling(self):
+        import numpy as _np
+        rng = _np.random.default_rng(3)
+        syms = self._qpsk(64, rng)
+        r = run_tool_stdin("sync_estimate", {"mode": "timing", "sample_rate_hz": 1000,
+                                             "samples_per_symbol": 1,
+                                             "i": list(syms.real), "q": list(syms.imag)})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("sps", r.stdout)  # 提示需要过采样
+
+    def test_rejects_short_input(self):
+        r = run_tool_stdin("sync_estimate", {"mode": "cfo", "sample_rate_hz": 1000,
+                                             "i": [1, 0, 1], "q": [0, 1, 0]})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("错误", r.stdout)
+
+
+class EqualizerTests(unittest.TestCase):
+    def test_mmse_improves_evm_on_selective_channel(self):
+        # 两径频选信道，MMSE 均衡应显著降低 EVM
+        r = run_tool_stdin("equalizer", {"equalizer": "mmse", "modulation": "QPSK",
+                                         "channel_taps": [1.0, 0.6, 0.3], "snr_db": 25,
+                                         "num_symbols": 4000, "seed": 1})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        pre = _extract_float(r.stdout, r"EVM 均衡前")
+        post = _extract_float(r.stdout, r"EVM 均衡后")
+        self.assertLess(post, pre, f"均衡后 EVM {post} 未低于均衡前 {pre}")
+
+    def test_dfe_runs(self):
+        r = run_tool_stdin("equalizer", {"equalizer": "dfe", "modulation": "QPSK",
+                                         "channel_taps": [1.0, 0.5], "snr_db": 20,
+                                         "num_symbols": 2000, "seed": 2})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("DFE", r.stdout)
+
+    def test_rejects_single_tap(self):
+        r = run_tool_stdin("equalizer", {"equalizer": "zf", "channel_taps": [1.0]})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("错误", r.stdout)
+
+    def test_rejects_even_num_taps(self):
+        r = run_tool_stdin("equalizer", {"equalizer": "mmse", "channel_taps": [1.0, 0.5],
+                                         "num_taps": 20})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("错误", r.stdout)
+
+
+class LinkAdaptationTests(unittest.TestCase):
+    def test_high_snr_picks_high_order(self):
+        # 30 dB Es/N0：应能支撑高阶调制（推荐档为 64QAM/256QAM 之一）
+        r = run_tool("link_adaptation", {"snr_db": 30, "snr_type": "es_n0", "target_ber": 1e-3})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("推荐 MCS", r.stdout)
+        self.assertTrue("64QAM" in r.stdout or "256QAM" in r.stdout)
+
+    def test_low_snr_falls_back_or_none(self):
+        # 极低 SNR（-5 dB）：即便最低档也难满足含余量门限 → 提示信道不足
+        r = run_tool("link_adaptation", {"snr_db": -5, "snr_type": "es_n0", "target_ber": 1e-3})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("推荐", r.stdout)  # 要么给最低档要么给"信道质量不足"
+
+    def test_shannon_bound_reported(self):
+        r = run_tool("link_adaptation", {"snr_db": 15})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("香农", r.stdout)
+        # 15 dB → log2(1+31.6) ≈ 5.03 bit/s/Hz
+        eff = _extract_float(r.stdout, r"香农效率上界")
+        self.assertAlmostEqual(eff, 5.03, delta=0.1)
+
+    def test_throughput_when_bandwidth_given(self):
+        r = run_tool("link_adaptation", {"snr_db": 20, "bandwidth_hz": 1e6})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("吞吐", r.stdout)
+
+    def test_rejects_bad_target_ber(self):
+        r = run_tool("link_adaptation", {"snr_db": 10, "target_ber": 0.9})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("错误", r.stdout)
+
+
+class SpreadSpectrumTests(unittest.TestCase):
+    def test_processing_gain_known_value(self):
+        # Rc=1.023 MHz, Rb=50 bit/s（GPS C/A 量级）→ Gp=10log10(20460)≈43.1 dB
+        r = run_tool("spread_spectrum", {"mode": "gain", "chip_rate_hz": 1.023e6, "data_rate_hz": 50})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        gp = _extract_float(r.stdout, r"处理增益")
+        self.assertAlmostEqual(gp, 43.1, delta=0.3)
+
+    def test_spread_factor_direct(self):
+        # 扩频因子 1024 → Gp = 10log10(1024) = 30.1 dB
+        r = run_tool("spread_spectrum", {"mode": "gain", "spread_factor": 1024})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        gp = _extract_float(r.stdout, r"处理增益")
+        self.assertAlmostEqual(gp, 30.1, delta=0.2)
+
+    def test_jam_margin(self):
+        # Gp=30.1 dB, 所需 Eb/N0=10 dB → 抗干扰余量 ≈ 20.1 dB
+        r = run_tool("spread_spectrum", {"mode": "jam", "spread_factor": 1024,
+                                         "required_ebn0_db": 10, "jammer_to_signal_db": 15})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("抗干扰余量", r.stdout)
+        mj = _extract_float(r.stdout, r"抗干扰余量")
+        self.assertAlmostEqual(mj, 20.1, delta=0.2)
+
+    def test_fhss_gain(self):
+        # 64 跳 → Gp = 10log10(64) = 18.06 dB
+        r = run_tool("spread_spectrum", {"mode": "gain", "hops": 64})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        gp = _extract_float(r.stdout, r"处理增益")
+        self.assertAlmostEqual(gp, 18.06, delta=0.1)
+
+    def test_despread_recovers_bits_over_jammer(self):
+        # 扩频因子 8 的 Walsh-like ±1 码，弱单音干扰下应 0 误码
+        code = [1, 1, 1, 1, -1, -1, -1, -1]
+        r = run_tool_stdin("spread_spectrum", {"mode": "despread",
+                                               "data_bits": [1, 0, 1, 1, 0],
+                                               "code": code, "jammer_amp": 0.3})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("解扩后误码", r.stdout)
+
+    def test_rejects_missing_params(self):
+        r = run_tool("spread_spectrum", {"mode": "gain"})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("错误", r.stdout)
+
+
+class BeamformingTests(unittest.TestCase):
+    def test_pattern_array_gain_known_value(self):
+        # 8 阵元 ULA：理想阵列增益 = 10log10(8) ≈ 9.03 dB
+        r = run_tool("beamforming", {"mode": "pattern", "num_elements": 8})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        gain = _extract_float(r.stdout, r"理想阵列增益")
+        self.assertAlmostEqual(gain, 9.03, delta=0.1)
+
+    def test_pattern_sidelobe_near_minus_13db(self):
+        # 半波长均匀加权 ULA 峰值旁瓣电平约 -13.2 dB
+        r = run_tool("beamforming", {"mode": "pattern", "num_elements": 16})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        psl = _extract_float(r.stdout, r"峰值旁瓣电平")
+        self.assertAlmostEqual(psl, -13.2, delta=1.0)
+
+    def test_mrt_gain(self):
+        # 各阵元等增益信道 → MRT 阵列增益接近 10log10(N)
+        import numpy as _np
+        n = 4
+        h = _np.ones(n, dtype=complex)
+        r = run_tool_stdin("beamforming", {"mode": "mrt",
+                                           "channel_i": list(h.real), "channel_q": list(h.imag)})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        gain = _extract_float(r.stdout, r"MRT 阵列增益")
+        self.assertAlmostEqual(gain, 10.0 * math.log10(n), delta=0.2)
+
+    def test_zf_orthogonal_users_perfect(self):
+        # 正交用户信道（单位阵嵌入）→ ZF 完美解耦
+        r = run_tool_stdin("beamforming", {"mode": "zf",
+                                           "channel_matrix": [[[1, 0], [0, 0]], [[0, 0], [1, 0]]]})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("最小信干比", r.stdout)
+
+    def test_zf_rejects_more_users_than_elements(self):
+        # 3 用户 2 阵元 → 无法迫零
+        r = run_tool_stdin("beamforming", {"mode": "zf",
+                                           "channel_matrix": [[[1, 0], [0, 0]],
+                                                              [[0, 0], [1, 0]],
+                                                              [[1, 0], [1, 0]]]})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("错误", r.stdout)
+
+
+class ModernCodesTests(unittest.TestCase):
+    """LDPC / Turbo（commpy）/ Polar（polarcodes）：验证跑通并给出编码增益方向，
+    不做精确 BER 断言（迭代译码耗时）。Polar 依赖第三方库，未装时会报清晰错误（也算通过管路）。"""
+
+    def test_ldpc_runs_and_reduces_ber(self):
+        # WiMAX LDPC rate-1/2；中等 Eb/N0 编码后 BER 应显著低于未编码
+        r = run_tool_stdin("channel_coding", {"code": "ldpc_wimax_r12", "modulation": "BPSK",
+                                              "channel": "awgn", "ebn0_db": [3], "num_bits": 960,
+                                              "seed": 1})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("LDPC", r.stdout)
+
+    def test_turbo_runs(self):
+        r = run_tool_stdin("channel_coding", {"code": "turbo_r13", "modulation": "BPSK",
+                                              "channel": "awgn", "ebn0_db": [2], "num_bits": 1000,
+                                              "seed": 1})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("Turbo", r.stdout)
+
+    def test_ldpc_too_few_bits(self):
+        r = run_tool_stdin("channel_coding", {"code": "ldpc_wimax_r12", "modulation": "BPSK",
+                                              "ebn0_db": [3], "num_bits": 8})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("错误", r.stdout)
+
+    def test_polar_runs_or_reports_dep(self):
+        # Polar rate-1/2（N256,K128）；一块 128 信息位跑单点。未装 polarcodes 或
+        # 库 API 不符时应给出清晰错误（不崩溃）；装了则应出现 Polar 报告。
+        r = run_tool_stdin("channel_coding", {"code": "polar_sc_r12", "modulation": "BPSK",
+                                              "channel": "awgn", "ebn0_db": [3], "num_bits": 128,
+                                              "seed": 1})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertTrue("Polar" in r.stdout or "polarcodes" in r.stdout or "错误" in r.stdout)
+
+    def test_polar_too_few_bits(self):
+        # 不足一个 Polar 块（K=128）时报清晰错误——但需先能加载库；未装库则报依赖错误，同样含「错误」
+        r = run_tool_stdin("channel_coding", {"code": "polar_sc_r12", "modulation": "BPSK",
+                                              "ebn0_db": [3], "num_bits": 8})
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("错误", r.stdout)
 

@@ -2,7 +2,7 @@
  * 离线冒烟测试：不起模型会话，直接以 mock ExtensionAPI 加载 comms-tools 扩展，
  * 逐个调用 execute 验证 Python 计算核桥接（bun scripts/dev/smoke_extension.ts）。
  *
- * 覆盖 20 个工具中的 19 个真实调用；online_knowledge 需外网，仅验证注册
+ * 覆盖 25 个工具中的 24 个真实调用；online_knowledge 需外网，仅验证注册
  * （其 provider 解析逻辑由 scripts/tests/test_online_knowledge.py 用 mock 覆盖）。
  */
 import commsTools from "../../.pi/extensions/comms-tools/index"
@@ -21,8 +21,8 @@ const mockPi = {
 
 commsTools(mockPi)
 console.log(`registered ${tools.length} tools: ${tools.map((t) => t.name).join(", ")}`)
-if (tools.length !== 20) {
-  console.log("[FAIL] 期望注册 20 个工具")
+if (tools.length !== 25) {
+  console.log("[FAIL] 期望注册 24 个工具")
   process.exit(1)
 }
 
@@ -62,6 +62,64 @@ const cases: Array<{ tool: string; params: unknown; expect: string }> = [
     tool: "signal_diagnose",
     params: { signal: sine.map((v) => v + 0.3), sample_rate_hz: 1000 },
     expect: "DC 偏置显著",
+  },
+  {
+    // CFO 盲估计：给 QPSK 常数符号叠加已知频偏 Δf=20Hz@1kHz，M=4 次方去调制应能找回
+    tool: "sync_estimate",
+    params: (() => {
+      const fs = 1000, df = 20, n = 256
+      const i: number[] = [], q: number[] = []
+      for (let k = 0; k < n; k++) {
+        // 固定 QPSK 符号 (1+j)/√2 叠加频偏
+        const ph = (2 * Math.PI * df * k) / fs + Math.PI / 4
+        i.push(Math.cos(ph))
+        q.push(Math.sin(ph))
+      }
+      return { mode: "cfo", i, q, sample_rate_hz: fs, modulation: "QPSK" }
+    })(),
+    expect: "CFO",
+  },
+  {
+    // 均衡：两径频选信道 [1, 0.5]，MMSE 应降低残余 ISI
+    tool: "equalizer",
+    params: { equalizer: "mmse", channel_taps: [1.0, 0.5], modulation: "QPSK", snr_db: 20, num_symbols: 1000, seed: 1 },
+    expect: "残余 ISI",
+  },
+  {
+    // 链路自适应：18 dB Es/N0 应能选到中高阶 MCS
+    tool: "link_adaptation",
+    params: { snr_db: 18, snr_type: "es_n0", target_ber: 1e-3 },
+    expect: "推荐 MCS",
+  },
+  {
+    // 扩频处理增益：码片率 1.023 MHz / 比特率 50 bps（GPS 量级）≈ 43 dB
+    tool: "spread_spectrum",
+    params: { mode: "gain", chip_rate_hz: 1.023e6, data_rate_hz: 50 },
+    expect: "处理增益",
+  },
+  {
+    // 波束成形：8 阵元 ULA 方向图，理想阵列增益 10log10(8)≈9.03 dB
+    tool: "beamforming",
+    params: { mode: "pattern", num_elements: 8, spacing_wavelength: 0.5, steer_deg: 0 },
+    expect: "阵列增益",
+  },
+  {
+    // 现代码：LDPC WiMAX rate-1/2（块长 K=720），1440 信息位=2 块，扫单点验证管路
+    tool: "channel_coding",
+    params: { code: "ldpc_wimax_r12", modulation: "BPSK", ebn0_db: [3], num_bits: 1440, seed: 1 },
+    expect: "编码",
+  },
+  {
+    // 现代码：Turbo rate-1/3（强制 BPSK 承载），一块 1000 信息位
+    tool: "channel_coding",
+    params: { code: "turbo_r13", modulation: "BPSK", ebn0_db: [1], num_bits: 1000, seed: 1 },
+    expect: "编码",
+  },
+  {
+    // 现代码：Polar SC rate-1/2（K=128），一块 128 信息位；polarcodes 库未装或 API 不符时会报错（非崩溃）
+    tool: "channel_coding",
+    params: { code: "polar_sc_r12", modulation: "BPSK", ebn0_db: [3], num_bits: 128, seed: 1 },
+    expect: "编码",
   },
   { tool: "ber_snr", params: { modulation: "QPSK", mode: "snr_to_ber", snr_db: 8 }, expect: "BER" },
   { tool: "modulation", params: { mode: "constellation", modulation: "QPSK" }, expect: "星座" },

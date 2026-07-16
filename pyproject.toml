@@ -11,10 +11,13 @@ dependencies = [
     "scipy>=1.10",
     # 可视化：plot 工具生成星座图/频谱/BER/波形/眼图 PNG。已是硬依赖（不再可选降级）。
     "matplotlib>=3.7",
-    # 信道编码 / FEC：卷积码 Viterbi（scikit-commpy）、Reed-Solomon（reedsolo）。
-    # 已是硬依赖：channel_coding 与其自检不再因缺库 SKIP。
+    # 信道编码 / FEC：卷积码 Viterbi + Turbo BCJR + LDPC BP（scikit-commpy）、
+    # Reed-Solomon（reedsolo）。已是硬依赖：channel_coding 与其自检不再因缺库 SKIP。
     "scikit-commpy>=0.8.0",
     "reedsolo>=1.7.0",
+    # Polar 码（SC 译码）：commpy 无极化码，用第三方 py-polar-codes 包（导入名 polarcodes）。
+    # 纯 Python + numpy，随 uv.lock 精确锁定；channel_coding 的 polar_r12 码型依赖它。
+    "py-polar-codes>=1.2.2",
 ]
 
 # 说明：本项目用 uv 管理 Python 环境。

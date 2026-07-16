@@ -60,16 +60,35 @@ if [ -n "${PYTHON_BIN:-}" ]; then
   fi
 fi
 
-# 6) 扩展冒烟（20 域工具桥 + 审批门 + 回滚）
+# 6) 白名单守卫：defs.ts 每个工具必须在 comms-env.sh 白名单里，否则 --tools 全局过滤
+#    会让新工具「注册了却静默不可见」（记录在案的故障模式，同 PYTHON_BIN 那次）。
+echo "--- 白名单守卫 ---"
+DEFS_TS="$ROOT/.pi/extensions/comms-tools/defs.ts"
+ENV_SH="$ROOT/scripts/comms-env.sh"
+# 顶层工具名 = 4 空格缩进的 name: "xxx"（嵌套字段如 stages.name 缩进更深且值为 Type.* ，不会误匹配）
+TOOL_NAMES="$(grep -oE '^    name: "[a-z_]+"' "$DEFS_TS" | sed -E 's/.*"([a-z_]+)".*/\1/')"
+MISSING=""
+for t in $TOOL_NAMES; do
+  # 白名单变量形如 "a,b,c"：任一工具名两侧恒为逗号或引号，[,"]name[,"] 覆盖首/中/末位
+  grep -qE "[,\"]$t[,\"]" "$ENV_SH" || MISSING="$MISSING $t"
+done
+if [ -z "$MISSING" ]; then
+  N_TOOLS="$(printf '%s\n' "$TOOL_NAMES" | grep -c .)"
+  ok "白名单守卫：defs.ts $N_TOOLS 个工具全部已接线 comms-env.sh"
+else
+  bad "白名单守卫：以下工具未在 comms-env.sh 白名单（--tools 会静默过滤掉）：$MISSING"
+fi
+
+# 7) 扩展冒烟（24 域工具桥 + 审批门 + 回滚）
 echo "--- 扩展冒烟 ---"
-bun "$ROOT/scripts/dev/smoke_extension.ts"  >/tmp/ck_ext.log 2>&1 && ok "域工具冒烟 21/21"   || { bad "域工具冒烟失败（详见 /tmp/ck_ext.log）"; }
+bun "$ROOT/scripts/dev/smoke_extension.ts"  >/tmp/ck_ext.log 2>&1 && ok "域工具冒烟 28/28"   || { bad "域工具冒烟失败（详见 /tmp/ck_ext.log）"; }
 bun "$ROOT/scripts/dev/smoke_gate.ts"       >/tmp/ck_gate.log 2>&1 && ok "审批门单测 8/8"     || { bad "审批门单测失败（详见 /tmp/ck_gate.log）"; }
 bun "$ROOT/scripts/dev/smoke_checkpoint.ts" >/tmp/ck_ckpt.log 2>&1 && ok "回滚扩展冒烟 3/3"   || { bad "回滚冒烟失败（详见 /tmp/ck_ckpt.log）"; }
 
-# 6) --full：完整 Python 单测（106 + 11）
+# 8) --full：完整 Python 单测
 if [ "${1:-}" = "--full" ]; then
   echo "--- Python 单测（--full）---"
-  "$PYTHON_BIN" -X utf8 "$ROOT/scripts/tests/test_domain_tools.py"    >/tmp/ck_py1.log 2>&1 && ok "域工具单测 107 条" || bad "域工具单测失败（/tmp/ck_py1.log）"
+  "$PYTHON_BIN" -X utf8 "$ROOT/scripts/tests/test_domain_tools.py"    >/tmp/ck_py1.log 2>&1 && ok "域工具单测 143 条" || bad "域工具单测失败（/tmp/ck_py1.log）"
   "$PYTHON_BIN" -X utf8 "$ROOT/scripts/tests/test_online_knowledge.py" >/tmp/ck_py2.log 2>&1 && ok "在线知识单测 11 条" || bad "在线知识单测失败（/tmp/ck_py2.log）"
 fi
 

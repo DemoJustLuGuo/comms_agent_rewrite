@@ -1,9 +1,13 @@
 /**
- * comms 域工具声明表：20 个工具的 name/label/描述/Typebox schema/运行 spec。
+ * comms 域工具声明表：25 个工具的 name/label/描述/Typebox schema/运行 spec。
  *
  * 前 15 个迁移自 opencode 时代 15 份 .ts 桥（schema 语义一字不动，zod→Typebox 机械转换）；
  * 2026-07-11 场景审计后新增 5 个：rf_chain/interference/channel_profile/fade_margin（工程评估）
  * + signal_diagnose（故障定位）。
+ * 2026-07-13 覆盖面扩展 Phase 1：equalizer（信道均衡演示）+ sync_estimate（同步偏差估计），
+ * 补诊断/优化闭环断点（channel_profile 判频选却无均衡算子、故障速查指向频偏估计却无算子）。
+ * 2026-07-13 Phase 2 高频工程题：link_adaptation（AMC/MCS 选择）+ spread_spectrum（扩频处理增益/抗干扰）。
+ * 2026-07-13 Phase 3 现代制式：channel_coding 扩 LDPC(WiMAX)/Turbo（commpy，已装）+ beamforming（ULA/MRT/ZF）。
  * promptSnippet 承载工具路由规则——路由知识只在这一处维护。
  *
  * 约定：
@@ -215,18 +219,18 @@ export const DEFS: CommsToolDef[] = [
     name: "channel_coding",
     label: "信道编码",
     description:
-      "信道编码/FEC 仿真：对给定码型+调制+信道，仿真「编码 vs 未编码」BER，量化真实编码增益（取代 ber_snr 手填的 coding_gain_db）。支持卷积码 K=7 rate-1/2（硬/软 Viterbi）、Hamming(7,4)、Reed-Solomon(255,223)。用于「某码在某信道能压多少 BER / 编码增益多少 dB」这类问题。",
+      "信道编码/FEC 仿真：对给定码型+调制+信道，仿真「编码 vs 未编码」BER，量化真实编码增益（取代 ber_snr 手填的 coding_gain_db）。支持卷积码 K=7 rate-1/2（硬/软 Viterbi）、Hamming(7,4)、Reed-Solomon(255,223)，以及现代码 LDPC（WiMAX rate-1/2，MSA-BP）、Turbo（rate-1/3 并行级联 RSC，BCJR，固定 BPSK 承载）、Polar（SC 译码 rate-1/2 N=256，固定 BPSK 承载）。用于「某码在某信道能压多少 BER / 编码增益多少 dB」这类问题，含 5G/WiFi 现代信道码。",
     promptSnippet:
-      "信道编码/FEC（编码增益、coded vs uncoded BER，卷积/Hamming/RS）调用 channel_coding，不要用 ber_snr 手填编码增益。",
+      "信道编码/FEC（编码增益、coded vs uncoded BER；卷积/Hamming/RS/LDPC/Turbo/Polar）调用 channel_coding，不要用 ber_snr 手填编码增益；5G/WiFi 现代码用 ldpc_wimax_r12 / turbo_r13 / polar_sc_r12。",
     parameters: Type.Object({
-      code: StringEnum(["conv_k7_r12", "hamming_7_4", "rs_255_223"], {
-        description: "码型：conv_k7_r12=卷积码K=7 rate-1/2；hamming_7_4=Hamming(7,4)；rs_255_223=Reed-Solomon(255,223)",
+      code: StringEnum(["conv_k7_r12", "hamming_7_4", "rs_255_223", "ldpc_wimax_r12", "turbo_r13", "polar_sc_r12"], {
+        description: "码型：conv_k7_r12=卷积码K=7 rate-1/2；hamming_7_4=Hamming(7,4)；rs_255_223=Reed-Solomon(255,223)；ldpc_wimax_r12=LDPC WiMAX rate-1/2；turbo_r13=Turbo rate-1/3（固定 BPSK）；polar_sc_r12=Polar SC rate-1/2 N=256（固定 BPSK）",
       }),
-      modulation: StringEnum(MODULATIONS, { description: "调制方式" }),
+      modulation: StringEnum(MODULATIONS, { description: "调制方式（注：turbo_r13 / polar_sc_r12 固定按 BPSK 承载，此参数对它们不生效）" }),
       channel: Type.Optional(StringEnum(["awgn", "rayleigh"], { description: "信道模型，默认 awgn" })),
       ebn0_db: Type.Optional(Type.Array(Type.Number(), { description: "Eb/N0 扫点（dB，每信息比特能量），默认 [2,4,6]" })),
       num_bits: Type.Optional(
-        Type.Number({ description: "每点信息比特数，默认 4000（conv 上限 20000，分组码上限 200000；越大 BER 分辨率越高但越慢）" }),
+        Type.Number({ description: "每点信息比特数，默认 4000（conv 上限 20000，ldpc/turbo/polar 上限 40000，分组码上限 200000；越大 BER 分辨率越高但越慢）" }),
       ),
       decision: Type.Optional(
         StringEnum(["hard", "soft"], { description: "判决方式，默认 hard；soft 仅 conv_k7_r12 + BPSK/QPSK，其余自动回退硬判决" }),
@@ -237,7 +241,7 @@ export const DEFS: CommsToolDef[] = [
     spec: {
       script: "channel_coding.py",
       timeoutMs: 180_000, // FEC 仿真（纯 Python Viterbi）比其它域工具重；Python 侧对比特数已封顶
-      failureHint: "确认 uv sync 已装 scikit-commpy/reedsolo，且参数合法；超时可减小 num_bits 或扫点数。",
+      failureHint: "确认 uv sync 已装 scikit-commpy/reedsolo/py-polar-codes，且参数合法；超时可减小 num_bits 或扫点数。",
     },
   },
   {
@@ -309,6 +313,100 @@ export const DEFS: CommsToolDef[] = [
     }),
     spec: { script: "ofdm.py", failureHint: "确认参数合法（n_used ≤ n_fft-1，cp_len ≥ 0，metric ∈ papr/ber/spectrum）。" },
   },
+  {
+    name: "equalizer",
+    label: "信道均衡",
+    description:
+      "信道均衡演示：给定频选信道抽头，仿真「均衡前 vs 均衡后」残余 ISI 与 EVM。支持 ZF（迫零，深谷噪声增强）、MMSE（含 1/SNR 正则，折中）、DFE（前馈+判决反馈，理想判决上界）。用于「频率选择性信道要不要均衡 / 各均衡器差多少」这类问题，与 channel_profile 的频选判定衔接。",
+    promptSnippet:
+      "频选信道均衡（ZF/MMSE/DFE、残余 ISI、均衡前后 EVM）调用 equalizer；channel_profile 判频率选择性后用它演示均衡效果。",
+    parameters: Type.Object({
+      equalizer: Type.Optional(StringEnum(["zf", "mmse", "dfe"], { description: "均衡器类型：zf 迫零；mmse 最小均方误差（默认）；dfe 判决反馈" })),
+      channel_taps: Type.Array(Type.Any(), {
+        description: "信道冲激响应抽头：实数列表 [1,0.5,0.3] 或复数列表 [[re,im],...]；第一抽头为主径，≥2 抽头才构成频选",
+      }),
+      modulation: Type.Optional(StringEnum(MODULATIONS, { description: "承载调制，默认 QPSK" })),
+      snr_db: Type.Optional(Type.Number({ description: "Es/N0，dB，默认 20（mmse 正则用；zf 忽略噪声）" })),
+      num_symbols: Type.Optional(Type.Number({ description: "仿真符号数，默认 2000，上限 50000" })),
+      num_taps: Type.Optional(Type.Number({ description: "均衡器 FIR 抽头数，默认 21（≥3 的奇数）" })),
+      seed: Type.Optional(Type.Number({ description: "随机种子（可复现）" })),
+    }),
+    spec: {
+      script: "equalizer.py",
+      stdinJson: true, // channel_taps 复数列表可能较长
+      failureHint: "确认 channel_taps ≥2 抽头、num_taps 为 ≥3 的奇数、调制方式受支持。",
+    },
+  },
+  {
+    name: "link_adaptation",
+    label: "链路自适应",
+    description:
+      "链路自适应 / AMC：给定信道质量（SNR），从 MCS 阶梯（BPSK→256QAM）选满足目标 BER 且保留余量的最高档，输出各档所需 SNR、频谱效率与香农上界对比。回答「当前 SINR 该选哪档调制编码 / 能跑多少频谱效率」这类高频问题，取代手工串 ber_snr+capacity。",
+    promptSnippet:
+      "「给定 SNR/SINR 选哪档调制编码（MCS）、能达到多少频谱效率」调用 link_adaptation；精确编码增益仍用 channel_coding 仿真。",
+    parameters: Type.Object({
+      snr_db: Type.Number({ description: "可用信道质量，dB（Es/N0 或 Eb/N0，见 snr_type）" }),
+      snr_type: Type.Optional(StringEnum(["es_n0", "eb_n0"], { description: "SNR 口径：es_n0 每符号（默认）| eb_n0 每比特" })),
+      target_ber: Type.Optional(Type.Number({ description: "目标未编码 BER 门限，默认 1e-3" })),
+      coding_gain_db: Type.Optional(Type.Number({ description: "统一编码增益，dB，默认 0（未编码）；精确值用 channel_coding 仿真" })),
+      margin_db: Type.Optional(Type.Number({ description: "选档保留的实现余量，dB，默认 1.0" })),
+      bandwidth_hz: Type.Optional(Type.Number({ description: "给了则额外输出各档吞吐 bit/s" })),
+    }),
+    spec: { script: "link_adaptation.py", failureHint: "确认 snr_db 为实数、target_ber 在 (0,0.5) 内。" },
+  },
+  {
+    name: "spread_spectrum",
+    label: "扩频分析",
+    description:
+      "扩频通信分析：DSSS 处理增益 Gp=10log10(码片率/比特率)=10log10(扩频因子)、FHSS 处理增益=10log10(跳频点数)、抗干扰余量（Gp−所需Eb/N0）与给定 J/S 下的净余量、以及小规模解扩数值演示（±1 码 + 单音干扰）。用于 DSSS/CDMA/GPS/跳频的处理增益与抗干扰评估，是知识库扩频增益概念的定量算子。",
+    promptSnippet:
+      "扩频处理增益、抗干扰余量、DSSS/跳频、解扩演示（Gp、扩频因子、J/S 容限）调用 spread_spectrum（mode=gain|jam|despread）。",
+    parameters: Type.Object({
+      mode: StringEnum(["gain", "jam", "despread"], {
+        description: "gain=处理增益与带宽扩展；jam=抗干扰余量；despread=解扩数值演示",
+      }),
+      chip_rate_hz: Type.Optional(Type.Number({ description: "gain/jam：码片速率 Rc，Hz（DSSS，与 spread_factor 二选一）" })),
+      data_rate_hz: Type.Optional(Type.Number({ description: "gain/jam：信息速率 Rb，Hz（与 chip_rate_hz 搭配算扩频因子）" })),
+      spread_factor: Type.Optional(Type.Number({ description: "gain/jam：直接给扩频因子（>1），与 chip/data 速率二选一" })),
+      hops: Type.Optional(Type.Number({ description: "gain/jam：FHSS 跳频点数（给了按 FHSS 处理增益=10log10(hops)）" })),
+      required_ebn0_db: Type.Optional(Type.Number({ description: "jam：解调所需 Eb/N0，dB，默认 10" })),
+      jammer_to_signal_db: Type.Optional(Type.Number({ description: "jam：实际干信比 J/S，dB（给了输出净余量结论）" })),
+      data_bits: Type.Optional(Type.Array(Type.Number(), { description: "despread：0/1 信息比特" })),
+      code: Type.Optional(Type.Array(Type.Number(), { description: "despread：±1 扩频码（长度=扩频因子）" })),
+      jammer_amp: Type.Optional(Type.Number({ description: "despread：单音干扰幅度（无量纲），默认 0" })),
+    }),
+    spec: {
+      script: "spread_spectrum.py",
+      stdinJson: true, // despread 的 data_bits/code 可能较长
+      failureHint: "按 mode 提供必填参数（gain 需 spread_factor 或 chip_rate_hz+data_rate_hz 或 hops；jam 追加 required_ebn0_db；despread 需 data_bits+code）。",
+    },
+  },
+  {
+    name: "beamforming",
+    label: "波束成形",
+    description:
+      "波束成形 / 预编码：均匀线阵(ULA)方向图（主瓣指向、3dB 波束宽度、峰值旁瓣电平、理想阵列增益 10log10(N)）、单用户 MRT 阵列增益、多用户 ZF 迫零预编码（有效信道对角/用户间残余干扰/条件数）。用于 massive MIMO / 5G 波束成形的空间处理评估，是 capacity（只算容量）之外的方向图与预编码算子。",
+    promptSnippet:
+      "波束成形/预编码（ULA 方向图、阵列增益、MRT、多用户 ZF 迫零、旁瓣/波束宽度）调用 beamforming（mode=pattern|mrt|zf）。",
+    parameters: Type.Object({
+      mode: StringEnum(["pattern", "mrt", "zf"], {
+        description: "pattern=ULA 方向图；mrt=单用户最大比发射增益；zf=多用户迫零预编码",
+      }),
+      num_elements: Type.Optional(Type.Number({ description: "pattern：阵元数 N，默认 8" })),
+      spacing_wavelength: Type.Optional(Type.Number({ description: "pattern：阵元间距（波长为单位），默认 0.5（半波长）" })),
+      steer_deg: Type.Optional(Type.Number({ description: "pattern：波束指向角（相对法线，度），默认 0" })),
+      channel_i: Type.Optional(Type.Array(Type.Number(), { description: "mrt：下行信道向量各阵元同相分量 I（长度=阵元数）" })),
+      channel_q: Type.Optional(Type.Array(Type.Number(), { description: "mrt：下行信道向量各阵元正交分量 Q" })),
+      channel_matrix: Type.Optional(
+        Type.Any({ description: "zf：复信道矩阵 [[[re,im],...],...]，行=用户 K、列=阵元 N（需 N≥K）" }),
+      ),
+    }),
+    spec: {
+      script: "beamforming.py",
+      stdinJson: true, // channel_matrix 可能较大
+      failureHint: "按 mode 提供必填参数（pattern 用 num_elements/steer_deg；mrt 需 channel_i+channel_q；zf 需 channel_matrix 且 N≥K）。",
+    },
+  },
   // ── 信号 / 协议分析 ─────────────────────────────────────────────────────
   {
     name: "signal_analysis",
@@ -359,6 +457,32 @@ export const DEFS: CommsToolDef[] = [
       script: "signal_diagnose.py",
       stdinJson: true, // 信号数组可能很大
       failureHint: "确认提供了 signal / signal_file / i+q 之一，且信号至少 32 点。",
+    },
+  },
+  {
+    name: "sync_estimate",
+    label: "同步偏差估计",
+    description:
+      "同步偏差估计（工程估计口径）：对接收复基带符号估计载波频偏 CFO（MPSK 盲估计 M 次方去调制，或导频数据辅助）、采样频偏 SFO（前后半段相位漂移粗估 ppm）、定时偏移（过采样信号能量重心 + 抛物线插值）。补 signal_diagnose 未覆盖的「星座旋转→先做频偏估计」闭环断点，配合 knowledge/故障特征速查.md 定位同步类根因。",
+    promptSnippet:
+      "载波频偏 CFO / 采样频偏 SFO / 定时偏移估计调用 sync_estimate（mode=cfo|sfo|timing，i+q 或 signal_file 提供复基带）；星座「整体旋转/CFO 残留」类症状先用它量化。",
+    parameters: Type.Object({
+      mode: StringEnum(["cfo", "sfo", "timing"], { description: "cfo=载波频偏；sfo=采样频偏（粗估）；timing=定时偏移（需过采样）" }),
+      i: Type.Optional(Type.Array(Type.Number(), { description: "接收复基带同相分量 I（与 q 等长；与 signal_file 二选一）" })),
+      q: Type.Optional(Type.Array(Type.Number(), { description: "接收复基带正交分量 Q" })),
+      signal_file: Type.Optional(
+        Type.String({ description: "信号文件路径：两列 I,Q 每行，或交错 I,Q,I,Q… 的数值；长信号用这个" }),
+      ),
+      sample_rate_hz: Type.Number({ description: "采样率，Hz（符号级输入时填符号率）" }),
+      modulation: Type.Optional(StringEnum(["BPSK", "QPSK", "8PSK"], { description: "cfo/sfo 盲估计用（M 次方去调制），默认 QPSK" })),
+      samples_per_symbol: Type.Optional(Type.Number({ description: "timing/sfo 用：每符号采样数，默认 1（timing 需 ≥2 才有子符号定时信息）" })),
+      known_symbols_i: Type.Optional(Type.Array(Type.Number(), { description: "cfo 数据辅助：已知/导频符号 I（给了则用数据辅助更准）" })),
+      known_symbols_q: Type.Optional(Type.Array(Type.Number(), { description: "cfo 数据辅助：已知/导频符号 Q" })),
+    }),
+    spec: {
+      script: "sync_estimate.py",
+      stdinJson: true, // I/Q 数组可能很大
+      failureHint: "确认按 mode 提供了复基带（i+q 或 signal_file，≥16 点），timing 模式需 samples_per_symbol≥2。",
     },
   },
   {
