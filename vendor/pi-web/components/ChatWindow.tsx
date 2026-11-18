@@ -5,6 +5,7 @@ import type { AgentMessage, AssistantContentBlock, AssistantMessage, ExtensionUi
 import { normalizeCustomPanelLines, parseAnsiLine } from "@/lib/ansi";
 import { countToolCallBlocks, getDisplayableAssistantBlocks, splitFinalAssistantBlocks } from "@/lib/message-display";
 import { MessageView } from "./MessageView";
+import { ApprovalRequest } from "./ApprovalRequest";
 import { ChatInput, type ChatInputHandle } from "./ChatInput";
 import { ChatMinimap, useMessageRefs } from "./ChatMinimap";
 import { useAgentSession, type AgentPhase, type NoticeItem } from "@/hooks/useAgentSession";
@@ -92,7 +93,7 @@ function withAssistantBlocks(
 
 function ProcessDetailsGroup({ messageCount, toolCallCount, children }: { messageCount: number; toolCallCount: number; children: ReactNode }) {
   const [expanded, setExpanded] = useState(false);
-  const parts = ["过程详情", `${messageCount} 条消息`];
+  const parts = ["查看证据", `${messageCount} 条过程记录`];
   if (toolCallCount > 0) parts.push(`${toolCallCount} 次工具调用`);
 
   return (
@@ -158,7 +159,7 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
     retryInfo, contextUsage, forkingEntryId,
     isCompacting, compactError, compactResult, displayModel: displayModelValue, sessionStats,
     slashCommands, slashCommandsLoading, queuedMessages,
-    notices, extensionDialog, extensionCustomUi, extensionStatuses, extensionWidgets, respondToExtensionUi, sendExtensionCustomInput,
+    notices, extensionDialog, pendingRequestCount, respondingRequestId, extensionResponseError, extensionCustomUi, extensionStatuses, extensionWidgets, respondToExtensionUi, sendExtensionCustomInput,
     isAutoModelSelection,
     agentPhase,
     isNew,
@@ -332,7 +333,7 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
         </div>
       )}
 
-      {extensionDialog && (
+      {extensionDialog && extensionDialog.method !== "confirm" && (
         <ExtensionDialog
           request={extensionDialog}
           onRespond={respondToExtensionUi}
@@ -502,9 +503,14 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
 
                 const isLiveTail = (agentRunning || streamState.isStreaming) && endIdx === messages.length && userIdx === lastUserIdx;
                 if (isLiveTail) {
-                  for (let renderIdx = userIdx; renderIdx < endIdx; renderIdx++) {
-                    rendered.push(renderMessage(renderIdx));
-                  }
+                  rendered.push(renderMessage(userIdx));
+                  const liveIndices = Array.from({ length: endIdx - userIdx - 1 }, (_, offset) => userIdx + offset + 1);
+                  const visibleIndices = liveIndices.filter((position) => hasDisplayableProcessMessage(messages[position]));
+                  if (visibleIndices.length > 0) rendered.push(
+                    <ProcessDetailsGroup key={`live-process-${entryIds[userIdx] ?? userIdx}`} messageCount={visibleIndices.length} toolCallCount={countToolCalls(messages, visibleIndices)}>
+                      {visibleIndices.map((position) => renderMessage(position, { attachRef: false }))}
+                    </ProcessDetailsGroup>,
+                  );
                   idx = endIdx;
                   continue;
                 }
@@ -526,6 +532,9 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
                   : null;
 
                 const processCount = visibleProcessIndices.length + (finalProcessMessage ? 1 : 0);
+                if (finalAnswerMessage) {
+                  rendered.push(renderMessage(finalAssistantIdx, { messageOverride: finalAnswerMessage }));
+                }
                 if (processCount > 0) {
                   const processRefIdx = visibleProcessIndices
                     .map((processIdx) => visibleRefIndexByMessage.get(processIdx))
@@ -550,9 +559,6 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
                   );
                 }
 
-                if (finalAnswerMessage) {
-                  rendered.push(renderMessage(finalAssistantIdx, { messageOverride: finalAnswerMessage }));
-                }
                 for (let renderIdx = finalAssistantIdx + 1; renderIdx < endIdx; renderIdx++) {
                   rendered.push(renderMessage(renderIdx));
                 }
@@ -561,9 +567,15 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
               return rendered;
             })()}
 
-            {streamState.isStreaming && streamState.streamingMessage && (
-              <MessageView message={streamState.streamingMessage as AgentMessage} isStreaming modelNames={modelNames} cwd={messageCwd} onOpenFile={onOpenFile} />
-            )}
+            {streamState.isStreaming && streamState.streamingMessage && (() => {
+              const message = streamState.streamingMessage as AssistantMessage;
+              if (message.role !== "assistant") return <MessageView message={message} isStreaming modelNames={modelNames} cwd={messageCwd} onOpenFile={onOpenFile} />;
+              const split = splitFinalAssistantBlocks(message, { isStreaming: true });
+              return <Fragment>
+                {split.answerBlocks.length > 0 && <MessageView message={withAssistantBlocks(message, split.answerBlocks)} isStreaming modelNames={modelNames} cwd={messageCwd} onOpenFile={onOpenFile} />}
+                {split.processBlocks.length > 0 && <ProcessDetailsGroup messageCount={1} toolCallCount={countToolCallBlocks(split.processBlocks)}><MessageView message={withAssistantBlocks(message, split.processBlocks)} isStreaming modelNames={modelNames} cwd={messageCwd} onOpenFile={onOpenFile} /></ProcessDetailsGroup>}
+              </Fragment>;
+            })()}
 
             {agentRunning && !streamState.streamingMessage && (
               <div className="py-2 text-[13px] text-text-muted">
@@ -597,6 +609,11 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
           }}
         >
           <div style={{ maxWidth: 820, margin: "0 auto" }}>
+            {agentRunning && !extensionDialog && <p role="status" className="mb-3 text-sm text-text-muted">{phaseLabel(agentPhase)}</p>}
+            {extensionDialog?.method === "confirm" && <ApprovalRequest request={extensionDialog} count={pendingRequestCount} busy={respondingRequestId !== null} error={extensionResponseError} onRespond={respondToExtensionUi} />}
+            {messages.slice(messages.findLastIndex((message) => message.role === "user") + 1).filter((message) => message.role === "toolResult" && message.isError).map((message) => (
+              <p key={(message as ToolResultMessage).toolCallId} role="alert" className="mb-2 max-h-24 overflow-auto whitespace-pre-wrap break-words text-sm text-red-500">工具失败：{(message as ToolResultMessage).content.filter((block) => block.type === "text").map((block) => block.type === "text" ? block.text : "").join("\n")}</p>
+            ))}
             <ExtensionWidgets widgets={belowEditorWidgets} />
           </div>
         </div>

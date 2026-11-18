@@ -77,6 +77,7 @@ export class AgentSessionWrapper {
   private listeners: EventListener[] = [];
   private pendingUiResponses = new Map<string, PendingUiResponse>();
   private pendingUiRequests = new Map<string, AgentEvent>();
+  private uiRequestRevision = 0;
   private activeCustomUis = new Map<string, ActiveCustomUi>();
   private extensionStatuses = new Map<string, string>();
   private extensionWidgets = new Map<string, ExtensionWidgetItem>();
@@ -297,6 +298,8 @@ export class AgentSessionWrapper {
           thinkingLevel: this.inner.agent.state?.thinkingLevel ?? "off",
           extensionStatuses: this.getExtensionStatuses(),
           extensionWidgets: this.getExtensionWidgets(),
+          pendingUiRequests: [...this.pendingUiRequests.values()],
+          uiRequestRevision: this.uiRequestRevision,
         };
       }
 
@@ -645,6 +648,7 @@ export class AgentSessionWrapper {
       id,
       ...request,
       ...(timeout ? { timeout, expiresAt: Date.now() + timeout } : {}),
+      uiRequestRevision: ++this.uiRequestRevision,
     };
 
     return new Promise((resolve) => {
@@ -657,6 +661,7 @@ export class AgentSessionWrapper {
       };
       const settle = (value: T) => {
         cleanup();
+        this.emit({ type: "extension_ui_dismiss", id, uiRequestRevision: ++this.uiRequestRevision });
         resolve(value);
       };
       const onAbort = () => settle(defaultValue);

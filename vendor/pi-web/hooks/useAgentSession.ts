@@ -11,6 +11,7 @@ import type {
 } from "@/lib/types";
 import { normalizeToolCalls } from "@/lib/normalize";
 import { sendAgentCommand } from "@/lib/agent-client";
+import { upsertRequest, removeRequest, pendingDialogs } from "@/lib/pending-requests";
 import { getToolNamesForPreset, type ToolEntry } from "@/lib/tool-presets";
 import type { SessionStatsInfo } from "@/lib/pi-types";
 
@@ -76,6 +77,8 @@ type AgentStateResponse = {
   extensionStatuses?: ExtensionStatusItem[];
   extensionWidgets?: ExtensionWidgetItem[];
   queuedMessages?: { steering?: string[]; followUp?: string[] } | null;
+  pendingUiRequests?: ExtensionUiRequest[];
+  uiRequestRevision?: number;
 };
 
 export interface QueuedMessages {
@@ -356,7 +359,10 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const [slashCommandsLoading, setSlashCommandsLoading] = useState(false);
   const [noticeState, dispatchNotice] = useReducer(noticeReducer, { visible: [], pending: [] });
   const [sessionStatsOverride, setSessionStatsOverride] = useState<SessionStatsInfo | null>(null);
-  const [extensionDialog, setExtensionDialog] = useState<ExtensionUiDialogRequest | null>(null);
+  const [extensionDialogs, setExtensionDialogs] = useState<ExtensionUiDialogRequest[]>([]);
+  const extensionDialog = extensionDialogs[0] ?? null;
+  const [respondingRequestId, setRespondingRequestId] = useState<string | null>(null);
+  const [extensionResponseError, setExtensionResponseError] = useState<string | null>(null);
   const [extensionCustomUi, setExtensionCustomUi] = useState<ExtensionUiCustomRequest | null>(null);
   const [extensionStatuses, setExtensionStatuses] = useState<ExtensionStatusItem[]>([]);
   const [extensionWidgets, setExtensionWidgets] = useState<ExtensionWidgetItem[]>([]);
@@ -377,6 +383,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const ensuringNewSessionRef = useRef<Promise<string | null> | null>(null);
   const newSessionPromotedRef = useRef(false);
   const promptRunIdRef = useRef(0);
+  const uiRequestRevisionRef = useRef(0);
   const optimisticUserMessageKeyRef = useRef<string | null>(null);
 
   const setToolPresetState = opts.setToolPreset ?? setToolPreset;
@@ -423,6 +430,12 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     } satisfies SessionStatsInfo;
   })();
 
+  const syncRequests = useCallback((state?: AgentStateResponse) => {
+    if (!state?.pendingUiRequests || (state.uiRequestRevision ?? 0) < uiRequestRevisionRef.current) return;
+    uiRequestRevisionRef.current = state.uiRequestRevision ?? 0;
+    setExtensionDialogs(pendingDialogs(state.pendingUiRequests));
+  }, []);
+
   const loadSession = useCallback(async (sid: string, showLoading = false, includeState = false) => {
     try {
       if (showLoading) setLoading(true);
@@ -448,6 +461,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       setCurrentModelOverride(null);
       setError(null);
       const liveState = d.agentState?.state;
+      syncRequests(liveState);
       if (liveState) {
         if (liveState.contextUsage !== undefined) setContextUsage(liveState.contextUsage ?? null);
         if (liveState.systemPrompt !== undefined) setSystemPrompt(liveState.systemPrompt ?? null);
@@ -468,7 +482,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     } finally {
       if (showLoading) setLoading(false);
     }
-  }, []);
+  }, [syncRequests]);
 
   const loadContext = useCallback(async (sid: string, leafId: string | null) => {
     try {
@@ -629,18 +643,22 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     response: { value: string } | { confirmed: boolean } | { cancelled: true },
   ) => {
     const sid = sessionIdRef.current;
-    setExtensionDialog((current) => current?.id === request.id ? null : current);
-    if (!sid) return;
+    if (!sid || respondingRequestId) return;
+    setRespondingRequestId(request.id);
+    setExtensionResponseError(null);
     try {
       await sendAgentCommand(sid, {
         type: "extension_ui_response",
         id: request.id,
         ...response,
       });
+      setExtensionDialogs((current) => removeRequest(current, request.id));
     } catch (e) {
-      console.error("Failed to send extension UI response:", e);
+      setExtensionResponseError(`答复未送达：${e instanceof Error ? e.message : String(e)}。请重试。`);
+    } finally {
+      setRespondingRequestId(null);
     }
-  }, []);
+  }, [respondingRequestId]);
 
   const sendExtensionCustomInput = useCallback(async (request: ExtensionUiCustomRequest, data: string) => {
     const sid = sessionIdRef.current;
@@ -675,7 +693,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       case "confirm":
       case "input":
       case "editor":
-        setExtensionDialog(request);
+        setExtensionDialogs((current) => upsertRequest(current, request));
         break;
       case "notify": {
         addNotice({
@@ -777,6 +795,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       // flight) — everything in it is stale, drop it.
       if (promptRunIdRef.current !== runId) return;
       const state = data.state;
+      syncRequests(state);
       // Mirror compaction state unconditionally: a missed compaction_end
       // would otherwise leave the "Stop compaction" UI stuck. No state
       // (wrapper destroyed) means nothing is compacting.
@@ -795,7 +814,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     } catch {
       // Network still down — the next poll / visibility / online tick retries.
     }
-  }, [finishPromptWithoutStream]);
+  }, [finishPromptWithoutStream, syncRequests]);
 
   // Recovery net for missed SSE events: while the agent is running, verify
   // against the server periodically and whenever the tab returns to the
@@ -969,7 +988,19 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         }
         break;
       case "extension_ui_request":
+        if (typeof event.uiRequestRevision === "number") {
+          if (event.uiRequestRevision < uiRequestRevisionRef.current) break;
+          uiRequestRevisionRef.current = event.uiRequestRevision;
+        }
         handleExtensionUiRequest(event as ExtensionUiRequest);
+        break;
+      case "extension_ui_dismiss":
+        if (typeof event.uiRequestRevision === "number") {
+          if (event.uiRequestRevision < uiRequestRevisionRef.current) break;
+          uiRequestRevisionRef.current = event.uiRequestRevision;
+        }
+        setExtensionDialogs((current) => removeRequest(current, event.id as string));
+        setExtensionResponseError(null);
         break;
     }
   }, [addNotice, finishPromptWithoutStream, handleExtensionUiRequest, loadSession, onAgentEnd]);
@@ -1389,6 +1420,9 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   // Load session on mount
   useEffect(() => {
     if (session) {
+      uiRequestRevisionRef.current = 0;
+      setExtensionDialogs([]);
+      setExtensionResponseError(null);
       sessionIdRef.current = session.id;
       loadSession(session.id, true, true).then((agentState) => {
         if (agentState?.running) {
@@ -1518,7 +1552,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     retryInfo, contextUsage, systemPrompt, forkingEntryId,
     isCompacting, compactError, compactResult, currentModel, displayModel, sessionStats,
     slashCommands, slashCommandsLoading, queuedMessages,
-    notices: noticeState.visible, extensionDialog, extensionCustomUi, extensionStatuses, extensionWidgets, respondToExtensionUi, sendExtensionCustomInput,
+    notices: noticeState.visible, extensionDialog, pendingRequestCount: extensionDialogs.length, respondingRequestId, extensionResponseError, extensionCustomUi, extensionStatuses, extensionWidgets, respondToExtensionUi, sendExtensionCustomInput,
     isAutoModelSelection: isNew && newSessionModel === null,
     agentPhase,
     isNew,
