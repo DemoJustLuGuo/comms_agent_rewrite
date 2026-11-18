@@ -58,7 +58,7 @@ def waterfill(gains: np.ndarray, total_power: float) -> np.ndarray:
     return restored
 
 
-def capacity_awgn(bandwidth_hz: float, snr_db: float) -> None:
+def capacity_awgn(bandwidth_hz: float, snr_db: float) -> dict:
     snr_lin = 10.0 ** (snr_db / 10.0)
     se = math.log2(1.0 + snr_lin)  # bit/s/Hz
     cap = bandwidth_hz * se  # bit/s
@@ -68,6 +68,7 @@ def capacity_awgn(bandwidth_hz: float, snr_db: float) -> None:
     print(f"频谱效率 η    : {se:.4f} bit/s/Hz")
     print(f"信道容量 C    : {cap:.4e} bit/s  ({cap / 1e6:.4f} Mbit/s)")
     print("说明          : C = B·log2(1+SNR)，为高斯输入的理论上界；实际调制/编码会低于该值。")
+    return {"capacity_bps": cap, "spectral_efficiency": se}
 
 
 def capacity_mimo(nt: int, nr: int, snr_db: float, realizations: int,
@@ -151,7 +152,12 @@ def main() -> None:
         if bandwidth_hz <= 0:
             print("错误：bandwidth_hz 必须为正数。")
             return
-        capacity_awgn(bandwidth_hz, float(payload["snr_db"]))
+        result = capacity_awgn(bandwidth_hz, float(payload["snr_db"]))
+        if payload.get("__comms_structured"):
+            print("COMMS_RESULT_JSON=" + json.dumps({
+                "data": result,
+                "units": {"capacity_bps": "bit/s", "spectral_efficiency": "bit/s/Hz"},
+            }, allow_nan=False))
 
     elif mode == "mimo":
         if "nt" not in payload or "nr" not in payload or "snr_db" not in payload:

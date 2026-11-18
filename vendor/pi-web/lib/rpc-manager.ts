@@ -78,6 +78,17 @@ export class AgentSessionWrapper {
   private pendingUiResponses = new Map<string, PendingUiResponse>();
   private pendingUiRequests = new Map<string, AgentEvent>();
   private uiRequestRevision = 0;
+  private initialToolPreset: "none" | "default" | "full" = "default";
+
+  setInitialToolPreset(preset: "none" | "default" | "full"): void {
+    this.initialToolPreset = preset;
+  }
+
+  private commsToolPreset(): "none" | "default" | "full" | undefined {
+    if (!this.inner.getAllTools().some((tool) => tool.name === "comms_find")) return undefined;
+    const entry = this.inner.sessionManager.getBranch().findLast((entry) => entry.type === "custom" && entry.customType === "comms-tool-policy");
+    return entry?.type === "custom" ? (entry.data as { preset: "none" | "default" | "full" }).preset : undefined;
+  }
   private activeCustomUis = new Map<string, ActiveCustomUi>();
   private extensionStatuses = new Map<string, string>();
   private extensionWidgets = new Map<string, ExtensionWidgetItem>();
@@ -174,6 +185,9 @@ export class AgentSessionWrapper {
         this.inner.extensionRunner.setUIContext?.(uiContext, "rpc");
       }
       this.extensionsBound = true;
+      if (this.inner.getAllTools().some((tool) => tool.name === "comms_find") && !this.commsToolPreset()) {
+        await this.inner.prompt(`/comms-tools ${this.initialToolPreset}`);
+      }
       this.applyForcedEmptySystemPrompt();
       console.log(`[pi-web] session_start dispatched to extensions for session ${this.inner.sessionId}`);
     })().catch((err) => {
@@ -198,7 +212,7 @@ export class AgentSessionWrapper {
   }
 
   private shouldWaitForExtensions(type: string): boolean {
-    return type === "prompt" || type === "steer" || type === "follow_up" || type === "get_commands";
+    return ["prompt", "steer", "follow_up", "get_commands", "get_tools", "set_tools"].includes(type);
   }
 
   private async withFinalRunningNotification<T>(operation: () => Promise<T>): Promise<T> {
@@ -417,6 +431,7 @@ export class AgentSessionWrapper {
           name: t.name,
           description: t.description,
           active: active.has(t.name),
+          preset: this.commsToolPreset(),
         }));
       }
 
@@ -452,7 +467,11 @@ export class AgentSessionWrapper {
       case "set_tools": {
         const toolNames = command.toolNames as string[];
         this.setForceEmptySystemPrompt(toolNames.length === 0);
-        this.inner.setActiveToolsByName(withExtensionTools(this.inner, toolNames));
+        if (this.inner.getAllTools().some((tool) => tool.name === "comms_find")) {
+          await this.inner.prompt(`/comms-tools ${toolNames.length === 0 ? "none" : toolNames.includes("grep") ? "full" : "default"}`);
+        } else {
+          this.inner.setActiveToolsByName(withExtensionTools(this.inner, toolNames));
+        }
         this.applyForcedEmptySystemPrompt();
         return null;
       }
@@ -933,7 +952,7 @@ export async function startRpcSession(
       // tool registry — so they were unavailable in pi-web sessions even though the
       // `pi` CLI keeps them. Leaving the allow-list unset lets the SDK register all
       // tools (and activate extension tools); we narrow the ACTIVE set below.
-      toolsOption = toolNames.length === 0 ? [] : undefined;
+      toolsOption = undefined;
     }
 
     // Build services first so extension-registered providers are available
@@ -951,8 +970,10 @@ export async function startRpcSession(
     if (toolNames && toolNames.length > 0) {
       inner.setActiveToolsByName(withExtensionTools(inner, toolNames));
     }
+    if (toolNames?.length === 0) inner.setActiveToolsByName([]);
 
     const wrapper = new AgentSessionWrapper(inner);
+    wrapper.setInitialToolPreset(toolNames?.length === 0 ? "none" : toolNames?.includes("grep") ? "full" : "default");
     // When all tools are disabled, clear the system prompt entirely.
     // pi's buildSystemPrompt always produces a non-empty prompt even with no tools;
     // keep this forced after extension resource discovery and reloads as well.

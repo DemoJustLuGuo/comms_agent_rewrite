@@ -43,6 +43,11 @@ def main() -> None:
     print(f"FSPL         = {loss_db:.2f} dB  (d={distance_km} km, f={freq_mhz} MHz)")
     print(f"其他损耗      = {other_losses_db:.2f} dB")
     print(f"接收功率 Prx  = {rx_power_dbm:.2f} dBm")
+    if payload.get("__comms_structured"):
+        print("COMMS_RESULT_JSON=" + json.dumps({
+            "data": {"eirp_dbm": eirp_dbm, "fspl_db": loss_db, "rx_power_dbm": rx_power_dbm},
+            "units": {"eirp_dbm": "dBm", "fspl_db": "dB", "rx_power_dbm": "dBm"},
+        }, allow_nan=False))
 
 
 if __name__ == "__main__":

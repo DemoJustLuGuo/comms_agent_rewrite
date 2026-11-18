@@ -6,6 +6,7 @@
  * （其 provider 解析逻辑由 scripts/tests/test_online_knowledge.py 用 mock 覆盖）。
  */
 import commsTools from "../../.pi/extensions/comms-tools/index"
+import { DEFS } from "../../.pi/extensions/comms-tools/defs"
 
 interface Registered {
   name: string
@@ -21,8 +22,8 @@ const mockPi = {
 
 commsTools(mockPi)
 console.log(`registered ${tools.length} tools: ${tools.map((t) => t.name).join(", ")}`)
-if (tools.length !== 25) {
-  console.log("[FAIL] 期望注册 24 个工具")
+if (tools.filter((tool) => DEFS.some((definition) => definition.name === tool.name)).length !== DEFS.length) {
+  console.log("[FAIL] 域工具注册不完整")
   process.exit(1)
 }
 
@@ -154,7 +155,7 @@ let failed = 0
 for (const c of cases) {
   const tool = tools.find((t) => t.name === c.tool)!
   const t0 = Date.now()
-  const r = await tool.execute("smoke", c.params)
+  const r = await tool.execute("smoke", c.params).catch((error: Error) => ({ content: [{ type: "text", text: error.message }] }))
   const text = r.content[0].text
   const ok = text.includes(c.expect)
   console.log(`[${ok ? "PASS" : "FAIL"}] ${c.tool} → 期望含「${c.expect}」（${((Date.now() - t0) / 1000).toFixed(1)}s）`)

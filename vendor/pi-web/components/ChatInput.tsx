@@ -831,7 +831,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
     if (lvl === "auto" || !thinkingLevelMap) return lvl;
     return thinkingLevelMap[lvl] ?? lvl;
   })();
-  const toolPresetLabel = Object.entries(TOOL_PRESET_MAP).find(([, v]) => v === (toolPreset ?? "default"))?.[0] ?? "default";
+  const toolPresetLabel = toolPreset === "none" ? "关闭" : toolPreset === "full" ? "全量" : "按需";
 
   // Close dropdowns on outside click
   useEffect(() => {
@@ -1745,7 +1745,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                     {TOOL_PRESETS.map((lvl) => {
                       const preset = TOOL_PRESET_MAP[lvl];
                       const isActive = (toolPreset ?? "default") === preset;
-                      const desc = lvl === "off" ? "无工具，只读" : lvl === "default" ? "4 个内置工具" : "全部内置工具";
+                      const desc = lvl === "off" ? "关闭工具调用" : lvl === "default" ? "按任务发现通信工具" : "显示全部可用工具";
                       return (
                         <button
                           key={lvl}

@@ -39,6 +39,7 @@ export interface PyToolSpec {
   timeoutMs?: number
   /** 失败时给模型的排障提示 */
   failureHint: string
+  structured?: boolean
 }
 
 export interface PyToolResult {
@@ -58,11 +59,19 @@ export function runPyTool(
 ): Promise<PyToolResult> {
   const script = path.join(TOOLS_DIR, spec.script)
   const timeoutMs = spec.timeoutMs ?? 30_000
-  const payload = JSON.stringify(params ?? {})
+  const payload = JSON.stringify({ ...(params as Record<string, unknown> ?? {}), ...(spec.structured ? { __comms_structured: true } : {}) })
   const argv = ["-X", "utf8", script, ...(spec.stdinJson ? [] : [payload])]
 
   return new Promise((resolve) => {
-    const done = (text: string) => resolve({ content: [{ type: "text", text }], details: {} })
+    const done = (text: string) => {
+      const marker = text.lastIndexOf("COMMS_RESULT_JSON=")
+      let data: Record<string, unknown> | undefined
+      if (marker >= 0) {
+        try { data = JSON.parse(text.slice(marker + "COMMS_RESULT_JSON=".length)) } catch { return resolve({ content: [{ type: "text", text: failureText(toolName, "结构化结果不可解析", spec.failureHint) }], details: { ok: false } }) }
+      }
+      const report = marker >= 0 ? text.slice(0, marker).trim() : text
+      resolve({ content: [{ type: "text", text: report }], details: { ok: !/^(?:【失败】|错误[：:])/mu.test(report), ...(data ?? {}) } })
+    }
     const fail = (reason: string) => done(failureText(toolName, reason, spec.failureHint))
 
     let child: ReturnType<typeof spawn>

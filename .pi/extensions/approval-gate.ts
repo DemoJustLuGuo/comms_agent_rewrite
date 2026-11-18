@@ -8,14 +8,7 @@
  *   仅当显式设置 COMMS_APPROVAL=allow-all（如脚本化验证）才放行。
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"
-
-const GATED = new Set(["bash", "write", "edit", "equivalence_check"])
-// MCP 桥接工具（pi-mcp-extension 注册名形如 mcp_<server>_<tool>）属外部任意执行面，
-// 对应旧栈 opencode 的 matlab* = ask：一律过审批门；未来新增 MCP server 自动被覆盖。
-const GATED_PREFIXES = ["mcp_"]
-
-const isGated = (toolName: string) =>
-  GATED.has(toolName) || GATED_PREFIXES.some((p) => toolName.startsWith(p))
+import { authorizeTool } from "./comms-tools/approval"
 
 /** 给用户看的操作摘要：够判断风险即可，长内容截断。 */
 export function summarize(toolName: string, input: Record<string, unknown>): string {
@@ -36,22 +29,6 @@ export function summarize(toolName: string, input: Record<string, unknown>): str
 
 export default function (pi: ExtensionAPI) {
   pi.on("tool_call", async (event, ctx) => {
-    if (!isGated(event.toolName)) return
-
-    const summary = summarize(event.toolName, (event.input ?? {}) as Record<string, unknown>)
-
-    if (!ctx.hasUI) {
-      if (process.env.COMMS_APPROVAL === "allow-all") return
-      return {
-        block: true,
-        reason:
-          "当前无交互界面，高风险操作默认拒绝（fail-closed）。请在交互模式下重试，或由运维显式设置 COMMS_APPROVAL=allow-all。",
-      }
-    }
-
-    const ok = await ctx.ui.confirm(`审批：${event.toolName}`, summary)
-    if (!ok) {
-      return { block: true, reason: "用户拒绝了本次操作。请解释意图或提出替代方案，不要原样重试。" }
-    }
+    return authorizeTool(event.toolName, (event.input ?? {}) as Record<string, unknown>, ctx)
   })
 }

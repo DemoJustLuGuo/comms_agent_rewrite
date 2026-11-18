@@ -45,7 +45,7 @@ export const DEFS: CommsToolDef[] = [
       distance_km: Type.Number({ description: "链路距离，km" }),
       other_losses_db: Type.Optional(Type.Number({ description: "其他损耗（馈线/大气等），dB，默认 0" })),
     }),
-    spec: { script: "link_budget.py", failureHint: "确认 uv sync 已建 .venv 且输入合法（距离/频率为正数）。" },
+    spec: { script: "link_budget.py", structured: true, failureHint: "确认 uv sync 已建 .venv 且输入合法（距离/频率为正数）。" },
   },
   {
     name: "path_loss",
@@ -124,7 +124,7 @@ export const DEFS: CommsToolDef[] = [
       temperature_k: Type.Optional(Type.Number({ description: "噪声温度，K，默认 290" })),
       required_ci_db: Type.Optional(Type.Number({ description: "解调所需 C/I 或 SINR 门限，dB；给了则输出余量结论" })),
     }),
-    spec: { script: "interference.py", failureHint: "确认 interferers 非空；sinr 模式需 noise_floor_dbm 或 bandwidth_hz。" },
+    spec: { script: "interference.py", structured: true, failureHint: "确认 interferers 非空；sinr 模式需 noise_floor_dbm 或 bandwidth_hz。" },
   },
   {
     name: "channel_profile",
@@ -265,6 +265,7 @@ export const DEFS: CommsToolDef[] = [
     }),
     spec: {
       script: "capacity.py",
+      structured: true,
       failureHint: "按 mode 提供必填参数（awgn 需 bandwidth_hz+snr_db；mimo 需 nt+nr+snr_db；ebn0 需 spectral_efficiency）。",
     },
   },

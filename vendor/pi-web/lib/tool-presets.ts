@@ -2,6 +2,7 @@ export interface ToolEntry {
   name: string;
   description: string;
   active: boolean;
+  preset?: ToolPreset;
 }
 
 export type ToolPreset = "none" | "default" | "full";
@@ -13,6 +14,8 @@ export const PRESET_FULL: string[] = ["bash", "read", "edit", "write", "grep", "
 const BUILTIN_TOOL_NAMES = new Set(PRESET_FULL);
 
 export function getPresetFromTools(tools: ToolEntry[]): ToolPreset {
+  const policy = tools.find((tool) => tool.preset)?.preset;
+  if (policy) return policy;
   const activeTools = tools.filter((t) => t.active);
   if (activeTools.length === 0) return "none";
 

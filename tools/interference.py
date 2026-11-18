@@ -75,6 +75,11 @@ def main() -> None:
         verdict = "满足" if margin >= 0 else "不满足"
         print(f"所需门限       = {req:.2f} dB")
         print(f"余量           = {margin:.2f} dB（{verdict}）")
+    if payload.get("__comms_structured"):
+        print("COMMS_RESULT_JSON=" + json.dumps({
+            "data": {"ratio_db": ratio_db, "interference_dbm": i_total_dbm},
+            "units": {"ratio_db": "dB", "interference_dbm": "dBm"},
+        }, allow_nan=False))
 
 
 if __name__ == "__main__":
