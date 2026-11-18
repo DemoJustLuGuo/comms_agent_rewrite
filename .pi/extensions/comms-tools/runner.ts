@@ -64,7 +64,7 @@ export function runPyTool(
 
   return new Promise((resolve) => {
     const done = (text: string) => {
-      const marker = text.lastIndexOf("COMMS_RESULT_JSON=")
+      const marker = spec.structured ? text.lastIndexOf("COMMS_RESULT_JSON=") : -1
       let data: Record<string, unknown> | undefined
       if (marker >= 0) {
         try { data = JSON.parse(text.slice(marker + "COMMS_RESULT_JSON=".length)) } catch { return resolve({ content: [{ type: "text", text: failureText(toolName, "结构化结果不可解析", spec.failureHint) }], details: { ok: false } }) }

@@ -12,6 +12,7 @@ import type {
 import { normalizeToolCalls } from "@/lib/normalize";
 import { sendAgentCommand } from "@/lib/agent-client";
 import { upsertRequest, removeRequest, pendingDialogs } from "@/lib/pending-requests";
+import type { ExperimentView } from "@/lib/experiment-types";
 import { getToolNamesForPreset, type ToolEntry } from "@/lib/tool-presets";
 import type { SessionStatsInfo } from "@/lib/pi-types";
 
@@ -73,6 +74,7 @@ type AgentStateResponse = {
   thinkingLevel?: string;
   isStreaming?: boolean;
   isPromptRunning?: boolean;
+  isExperimentRunning?: boolean;
   isCompacting?: boolean;
   extensionStatuses?: ExtensionStatusItem[];
   extensionWidgets?: ExtensionWidgetItem[];
@@ -363,6 +365,10 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const extensionDialog = extensionDialogs[0] ?? null;
   const [respondingRequestId, setRespondingRequestId] = useState<string | null>(null);
   const [extensionResponseError, setExtensionResponseError] = useState<string | null>(null);
+  const [experiment, setExperiment] = useState<ExperimentView | null>(null);
+  const [experimentBusy, setExperimentBusy] = useState(false);
+  const [experimentActionPending, setExperimentActionPending] = useState(false);
+  const [experimentError, setExperimentError] = useState<string | null>(null);
   const [extensionCustomUi, setExtensionCustomUi] = useState<ExtensionUiCustomRequest | null>(null);
   const [extensionStatuses, setExtensionStatuses] = useState<ExtensionStatusItem[]>([]);
   const [extensionWidgets, setExtensionWidgets] = useState<ExtensionWidgetItem[]>([]);
@@ -436,6 +442,16 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     setExtensionDialogs(pendingDialogs(state.pendingUiRequests));
   }, []);
 
+  const loadExperiment = useCallback(async (sid: string) => {
+    try {
+      const state = await sendAgentCommand<ExperimentView | null>(sid, { type: "get_experiment" });
+      if (sessionIdRef.current !== sid) return;
+      setExperiment(state);
+      setExperimentBusy(state?.status === "running");
+    }
+    catch (error) { setExperimentError(error instanceof Error ? error.message : String(error)); }
+  }, []);
+
   const loadSession = useCallback(async (sid: string, showLoading = false, includeState = false) => {
     try {
       if (showLoading) setLoading(true);
@@ -462,6 +478,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       setError(null);
       const liveState = d.agentState?.state;
       syncRequests(liveState);
+      if (liveState?.isExperimentRunning !== undefined) setExperimentBusy(liveState.isExperimentRunning);
       if (liveState) {
         if (liveState.contextUsage !== undefined) setContextUsage(liveState.contextUsage ?? null);
         if (liveState.systemPrompt !== undefined) setSystemPrompt(liveState.systemPrompt ?? null);
@@ -1002,9 +1019,40 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         setExtensionDialogs((current) => removeRequest(current, event.id as string));
         setExtensionResponseError(null);
         break;
+      case "experiment_updated":
+        setExperiment(event.experiment as ExperimentView);
+        setExperimentBusy((event.experiment as ExperimentView).status === "running");
+        break;
+      case "experiment_settled":
+        setExperimentBusy(false);
+        if (sessionIdRef.current) void loadExperiment(sessionIdRef.current);
+        break;
+      case "experiment_error":
+        setExperimentBusy(false);
+        setExperimentError(String(event.message));
+        break;
     }
-  }, [addNotice, finishPromptWithoutStream, handleExtensionUiRequest, loadSession, onAgentEnd]);
+  }, [addNotice, finishPromptWithoutStream, handleExtensionUiRequest, loadSession, loadExperiment, onAgentEnd]);
   handleAgentEventRef.current = handleAgentEvent;
+
+  const handleExperimentAction = useCallback(async (command: Record<string, unknown>) => {
+    const sid = sessionIdRef.current ?? await ensureNewSession();
+    if (!sid || (experimentActionPending && command.type !== "experiment_stop")) return;
+    setExperimentActionPending(true);
+    setExperimentError(null);
+    try {
+      await ensureEventsConnected(sid);
+      const result = await sendAgentCommand(sid, command);
+      if (command.type !== "experiment_diff") {
+        await loadExperiment(sid);
+        await loadSession(sid);
+        promoteNewSession();
+      }
+      return result;
+    } catch (error) {
+      setExperimentError(error instanceof Error ? error.message : String(error));
+    } finally { setExperimentActionPending(false); }
+  }, [ensureNewSession, ensureEventsConnected, experimentActionPending, loadExperiment, loadSession, promoteNewSession]);
 
   const handleSend = useCallback(async (message: string, images?: AttachedImage[]) => {
     const trimmedMessage = message.trim();
@@ -1123,20 +1171,22 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const handleNavigate = useCallback(async (entryId: string) => {
     const sid = sessionIdRef.current;
     if (!sid) return;
-    sendAgentCommand(sid, { type: "navigate_tree", targetId: entryId }).catch(() => {});
+    await sendAgentCommand(sid, { type: "navigate_tree", targetId: entryId });
     setActiveLeafId(entryId);
     await loadContext(sid, entryId);
-  }, [loadContext]);
+    await loadExperiment(sid);
+  }, [loadContext, loadExperiment]);
 
   const handleLeafChange = useCallback(async (leafId: string | null) => {
     setActiveLeafId(leafId);
     const sid = sessionIdRef.current;
     if (!sid) return;
-    await loadContext(sid, leafId);
     if (leafId) {
-      sendAgentCommand(sid, { type: "navigate_tree", targetId: leafId }).catch(() => {});
+      await sendAgentCommand(sid, { type: "navigate_tree", targetId: leafId });
     }
-  }, [loadContext]);
+    await loadContext(sid, leafId);
+    await loadExperiment(sid);
+  }, [loadContext, loadExperiment]);
 
   const handleModelChange = useCallback(async (provider: string, modelId: string) => {
     if (isNew) {
@@ -1424,9 +1474,14 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       setExtensionDialogs([]);
       setExtensionResponseError(null);
       sessionIdRef.current = session.id;
+      setExperiment(null);
+      setExperimentBusy(false);
+      setExperimentError(null);
+      void loadExperiment(session.id);
       loadSession(session.id, true, true).then((agentState) => {
         if (agentState?.running) {
           loadTools(session.id);
+          if (agentState.state?.isExperimentRunning || agentState.state?.pendingUiRequests?.length) void connectEvents(session.id);
           if (agentState.state?.isStreaming || agentState.state?.isPromptRunning) {
             agentRunningRef.current = true;
             setAgentRunning(true);
@@ -1513,6 +1568,13 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
 
   // Compact error auto-dismiss
   useEffect(() => {
+    if (!experimentBusy || !sessionIdRef.current) return;
+    const sid = sessionIdRef.current;
+    const timer = setInterval(() => { void loadExperiment(sid); }, 2000);
+    return () => clearInterval(timer);
+  }, [experimentBusy, loadExperiment]);
+
+  useEffect(() => {
     if (!compactError) return;
     const t = setTimeout(() => setCompactError(null), 3000);
     return () => clearTimeout(t);
@@ -1553,6 +1615,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     isCompacting, compactError, compactResult, currentModel, displayModel, sessionStats,
     slashCommands, slashCommandsLoading, queuedMessages,
     notices: noticeState.visible, extensionDialog, pendingRequestCount: extensionDialogs.length, respondingRequestId, extensionResponseError, extensionCustomUi, extensionStatuses, extensionWidgets, respondToExtensionUi, sendExtensionCustomInput,
+    experiment, experimentBusy: experimentBusy || experimentActionPending, experimentError, handleExperimentAction,
     isAutoModelSelection: isNew && newSessionModel === null,
     agentPhase,
     isNew,

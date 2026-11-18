@@ -45,8 +45,9 @@ export function findTools(query: string, available: string[], limit = 3) {
     .slice(0, Math.max(1, Math.min(5, limit))).map((match) => match.definition)
 }
 
-export function selectTools(available: string[], preset: "none" | "default" | "full") {
+export function selectTools(available: string[], preset: "none" | "default" | "full", experimentActive = false) {
   if (preset === "none") return []
-  if (preset === "full") return [...available]
-  return CORE_NAMES.filter((name) => available.includes(name))
+  const names = preset === "full" ? available : CORE_NAMES.filter((name) => available.includes(name))
+  if (!experimentActive) return names.filter((name) => !name.startsWith("experiment_"))
+  return [...new Set([...names, ...available.filter((name) => name.startsWith("experiment_"))])].filter((name) => name !== "bash" && name !== "equivalence_check" && !name.startsWith("mcp_"))
 }

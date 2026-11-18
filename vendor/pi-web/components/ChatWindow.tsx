@@ -6,6 +6,7 @@ import { normalizeCustomPanelLines, parseAnsiLine } from "@/lib/ansi";
 import { countToolCallBlocks, getDisplayableAssistantBlocks, splitFinalAssistantBlocks } from "@/lib/message-display";
 import { MessageView } from "./MessageView";
 import { ApprovalRequest } from "./ApprovalRequest";
+import { ExperimentPanel } from "./ExperimentPanel";
 import { ChatInput, type ChatInputHandle } from "./ChatInput";
 import { ChatMinimap, useMessageRefs } from "./ChatMinimap";
 import { useAgentSession, type AgentPhase, type NoticeItem } from "@/hooks/useAgentSession";
@@ -162,6 +163,7 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
     notices, extensionDialog, pendingRequestCount, respondingRequestId, extensionResponseError, extensionCustomUi, extensionStatuses, extensionWidgets, respondToExtensionUi, sendExtensionCustomInput,
     isAutoModelSelection,
     agentPhase,
+    experiment, experimentBusy, experimentError, handleExperimentAction,
     isNew,
     messagesEndRef, scrollContainerRef,
     lastUserMsgRef,
@@ -611,6 +613,7 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
           <div style={{ maxWidth: 820, margin: "0 auto" }}>
             {agentRunning && !extensionDialog && <p role="status" className="mb-3 text-sm text-text-muted">{phaseLabel(agentPhase)}</p>}
             {extensionDialog?.method === "confirm" && <ApprovalRequest request={extensionDialog} count={pendingRequestCount} busy={respondingRequestId !== null} error={extensionResponseError} onRespond={respondToExtensionUi} />}
+            <ExperimentPanel key={session?.id ?? newSessionCwd} experiment={experiment} busy={experimentBusy || agentRunning} error={experimentError} cwd={messageCwd ?? ""} sessionId={session?.id} onAction={handleExperimentAction} onOptimize={(message) => void handleSend(message)} onOpenFile={onOpenFile} />
             {messages.slice(messages.findLastIndex((message) => message.role === "user") + 1).filter((message) => message.role === "toolResult" && message.isError).map((message) => (
               <p key={(message as ToolResultMessage).toolCallId} role="alert" className="mb-2 max-h-24 overflow-auto whitespace-pre-wrap break-words text-sm text-red-500">工具失败：{(message as ToolResultMessage).content.filter((block) => block.type === "text").map((block) => block.type === "text" ? block.text : "").join("\n")}</p>
             ))}

@@ -4,6 +4,13 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 REAL_PROJECT="$PROJECT_ROOT/real_projects/ModulationPy"
+if [ "$#" -gt 0 ]; then
+  if [ "$#" -ne 2 ] || [ "$1" != "--project" ]; then
+    echo "用法: bash scripts/check-real-project.sh [--project 工作区目录]" >&2
+    exit 2
+  fi
+  REAL_PROJECT="$2"
+fi
 # 定位 uv 虚拟环境解释器并 export PYTHON_BIN（缺 .venv 时报错引导 uv sync 并退出）。
 # shellcheck source=/dev/null
 . "$SCRIPT_DIR/venv-python.sh"
@@ -29,6 +36,7 @@ else
   echo "" >&2
 fi
 cd "$REAL_PROJECT"
+echo "Validation target: $(pwd)"
 echo "Running ModulationPy tests..."
 "$PYTHON" -m unittest tests.py
 echo "ModulationPy real project check passed."

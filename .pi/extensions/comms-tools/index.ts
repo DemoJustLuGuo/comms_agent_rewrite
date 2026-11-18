@@ -8,10 +8,12 @@ import { runPyTool } from "./runner"
 import { Type } from "typebox"
 import { findTools, selectTools } from "./catalog"
 import { runCalculationBatch } from "./batch"
+import { ExperimentEngine, experimentIdFor } from "../comms-experiments/engine"
 
 export default function (pi: ExtensionAPI) {
   let preset: "none" | "default" | "full" = "full"
-  const applyPreset = () => pi.setActiveTools(selectTools(pi.getAllTools().map((tool) => tool.name), preset))
+  let experimentActive = false
+  const applyPreset = () => pi.setActiveTools(selectTools(pi.getAllTools().map((tool) => tool.name), preset, experimentActive))
   for (const def of DEFS) {
     pi.registerTool({
       name: def.name,
@@ -53,6 +55,7 @@ export default function (pi: ExtensionAPI) {
     description: "通信工具显示策略：default 按需、full 全量、none 关闭",
     handler: async (args) => {
       if (!["none", "default", "full"].includes(args.trim())) throw new Error("工具策略必须为 default、full 或 none。")
+      if (args.trim() === "default" && !pi.getAllTools().some((tool) => tool.name === "comms_find")) throw new Error("此入口的工具白名单不支持按需发现，请在 Web 工作台使用该策略。")
       preset = args.trim() as typeof preset
       pi.appendEntry("comms-tool-policy", { preset })
       applyPreset()
@@ -65,8 +68,10 @@ export default function (pi: ExtensionAPI) {
       applyPreset()
     }
   })
-  pi.on("before_agent_start", () => {
-    if (preset !== "full") applyPreset()
+  pi.on("before_agent_start", (_event, ctx) => {
+    const id = experimentIdFor(ctx.sessionManager)
+    experimentActive = !!id && !["applied", "completed"].includes(new ExperimentEngine().read(id).status)
+    if (preset !== "full" || experimentActive) applyPreset()
   })
   pi.on("tool_result", (event) => {
     if (event.toolName === "comms_batch" && event.details?.ok === false) return { isError: true }

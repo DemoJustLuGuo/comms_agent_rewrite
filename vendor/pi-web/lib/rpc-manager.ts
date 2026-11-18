@@ -1,4 +1,8 @@
 import { createAgentSessionFromServices, createAgentSessionServices, getAgentDir, SessionManager } from "@earendil-works/pi-coding-agent";
+import { ExperimentEngine, experimentIdFor, type ExperimentConfig } from "../../../.pi/extensions/comms-experiments/engine";
+import { experimentSummary } from "../../../.pi/extensions/comms-experiments/index";
+import { getAllowedFileRoots, isFilePathAllowed } from "./file-access";
+import { realpathSync } from "node:fs";
 import { randomUUID } from "crypto";
 import { cacheSessionPath } from "./session-reader";
 import type { SlashCommandInfo } from "@earendil-works/pi-coding-agent";
@@ -78,6 +82,9 @@ export class AgentSessionWrapper {
   private pendingUiResponses = new Map<string, PendingUiResponse>();
   private pendingUiRequests = new Map<string, AgentEvent>();
   private uiRequestRevision = 0;
+  private experimentBusy = false;
+  private experimentActionPending = false;
+  private experimentApprovalAbort: AbortController | null = null;
   private initialToolPreset: "none" | "default" | "full" = "default";
 
   setInitialToolPreset(preset: "none" | "default" | "full"): void {
@@ -117,7 +124,22 @@ export class AgentSessionWrapper {
   }
 
   isRunning(): boolean {
-    return this._alive && (this.promptRunning || this.inner.isStreaming || this.inner.isCompacting);
+    return this._alive && (this.experimentActionPending || this.experimentBusy || this.promptRunning || this.inner.isStreaming || this.inner.isCompacting);
+  }
+
+  private async withExperimentAction<T>(operation: (signal: AbortSignal) => Promise<T>): Promise<T> {
+    if (this.isRunning()) throw new Error("请等待当前任务或审批结束后再操作实验。");
+    const controller = new AbortController();
+    this.experimentApprovalAbort = controller;
+    this.experimentActionPending = true;
+    notifyRunningChange();
+    try { return await operation(controller.signal); }
+    finally {
+      this.experimentApprovalAbort = null;
+      this.experimentActionPending = false;
+      this.emit({ type: "experiment_settled" });
+      notifyRunningChange();
+    }
   }
 
   start(): void {
@@ -212,7 +234,7 @@ export class AgentSessionWrapper {
   }
 
   private shouldWaitForExtensions(type: string): boolean {
-    return ["prompt", "steer", "follow_up", "get_commands", "get_tools", "set_tools"].includes(type);
+    return ["prompt", "steer", "follow_up", "get_commands", "get_tools", "set_tools", "experiment_start", "experiment_run", "experiment_apply"].includes(type);
   }
 
   private async withFinalRunningNotification<T>(operation: () => Promise<T>): Promise<T> {
@@ -258,6 +280,7 @@ export class AgentSessionWrapper {
 
     switch (type) {
       case "prompt": {
+        if (this.experimentBusy || this.experimentActionPending) throw new Error("实验操作正在进行，请先等待或停止实验。");
         // Fire and forget — events come via subscribe
         const promptImages = command.images as Array<{ type: "image"; data: string; mimeType: string }> | undefined;
         const streamingBehavior = command.streamingBehavior as "steer" | "followUp" | undefined;
@@ -284,6 +307,7 @@ export class AgentSessionWrapper {
       }
 
       case "abort":
+        this.experimentApprovalAbort?.abort();
         await this.withFinalRunningNotification(() => this.inner.abort());
         return null;
 
@@ -295,6 +319,7 @@ export class AgentSessionWrapper {
           sessionFile: this.inner.sessionFile ?? "",
           isStreaming: this.inner.isStreaming,
           isPromptRunning: this.promptRunning,
+          isExperimentRunning: this.experimentBusy || this.experimentActionPending,
           isCompacting: this.inner.isCompacting,
           autoCompactionEnabled: this.inner.autoCompactionEnabled,
           autoRetryEnabled: this.inner.autoRetryEnabled,
@@ -326,7 +351,88 @@ export class AgentSessionWrapper {
         return { id: model.id, provider: model.provider };
       }
 
+      case "get_experiment": {
+        const id = experimentIdFor(this.inner.sessionManager);
+        return id ? experimentSummary(new ExperimentEngine().read(id)) : null;
+      }
+
+      case "experiment_start": {
+        return this.withExperimentAction(async (signal) => {
+        const config = command.config as ExperimentConfig;
+        const roots = await getAllowedFileRoots();
+        if (!isFilePathAllowed(realpathSync(config.project), roots)) throw new Error("实验项目尚未在工作台中授权浏览。");
+        const accepted = await this.createExtensionUiContext().confirm("审批：创建实验工作区", `目标：${config.goal}\n项目：${config.project}\n文件：${config.allowedFiles.join("、")}\n指标：${config.metric.name}（${config.metric.unit}）\n最大候选轮数：${config.maxIterations}`, { signal });
+        if (!accepted || signal.aborted) throw new Error("创建实验已拒绝或取消。");
+        const experiment = await new ExperimentEngine().start(config, this.inner.sessionId);
+        this.inner.sessionManager.appendCustomEntry("comms-experiment", { id: experiment.id });
+        this.emit({ type: "experiment_updated", experiment: experimentSummary(experiment) });
+        return experimentSummary(experiment);
+        });
+      }
+
+      case "experiment_run": {
+        return this.withExperimentAction(async (signal) => {
+        const engine = new ExperimentEngine();
+        const id = experimentIdFor(this.inner.sessionManager);
+        if (!id) throw new Error("当前会话没有实验。");
+        const experiment = engine.read(id);
+        engine.requireOwner(experiment, this.inner.sessionId);
+        const preview = engine.preview(id);
+        const accepted = await this.createExtensionUiContext().confirm("审批：执行实验验证", `工作区：${preview.directory}\n${preview.commands.map((argv) => argv.join(" ")).join("\n")}`, { signal });
+        if (!accepted || signal.aborted) throw new Error("实验执行已拒绝或取消。");
+        this.experimentBusy = true;
+        notifyRunningChange();
+        void engine.run(id, this.inner.sessionId, (state) => this.emit({ type: "experiment_updated", experiment: experimentSummary(state) })).catch((error) => this.emit({ type: "experiment_error", message: error instanceof Error ? error.message : String(error) })).finally(() => { this.experimentBusy = false; this.emit({ type: "experiment_settled" }); notifyRunningChange(); });
+        return null;
+        });
+      }
+
+      case "experiment_stop": {
+        this.experimentApprovalAbort?.abort();
+        const id = experimentIdFor(this.inner.sessionManager);
+        if (id) new ExperimentEngine().stop(id, this.inner.sessionId);
+        await this.inner.abort();
+        return null;
+      }
+
+      case "experiment_resume": {
+        return this.withExperimentAction(async () => {
+          const id = experimentIdFor(this.inner.sessionManager);
+          if (!id) throw new Error("当前会话没有实验。");
+          return experimentSummary(new ExperimentEngine().resume(id, this.inner.sessionId));
+        });
+      }
+
+      case "experiment_recover": {
+        return this.withExperimentAction(async (signal) => {
+        const id = experimentIdFor(this.inner.sessionManager);
+        if (!id) throw new Error("当前会话没有实验。");
+        const accepted = await this.createExtensionUiContext().confirm("审批：重新检查应用恢复", "仅恢复仍与已应用快照一致的文件；检测到外部改动时会保留并停止。请先审阅原项目与暂存文件。", { signal });
+        if (!accepted || signal.aborted) throw new Error("恢复检查已拒绝或取消。");
+        return experimentSummary(new ExperimentEngine().recover(id, this.inner.sessionId));
+        });
+      }
+
+      case "experiment_diff": {
+        const id = experimentIdFor(this.inner.sessionManager);
+        if (!id) throw new Error("当前会话没有实验。");
+        return { diff: await new ExperimentEngine().diff(id, command.runId as string) };
+      }
+
+      case "experiment_apply": {
+        return this.withExperimentAction(async (signal) => {
+        const id = experimentIdFor(this.inner.sessionManager);
+        if (!id) throw new Error("当前会话没有实验。");
+        const accepted = await this.createExtensionUiContext().confirm("审批：应用已验证候选", "将本轮已验证文件写回原项目；不会提交或推送。原项目版本或文件已变化时会拒绝应用。", { signal });
+        if (!accepted || signal.aborted) throw new Error("候选应用已拒绝或取消。");
+        const experiment = await new ExperimentEngine().apply(id, command.runId as string, this.inner.sessionId);
+        this.emit({ type: "experiment_updated", experiment: experimentSummary(experiment) });
+        return experimentSummary(experiment);
+        });
+      }
+
       case "fork": {
+        if (this.isRunning()) throw new Error("请等待任务结束后再分叉会话。");
         const entryId = command.entryId as string;
         const sessionManager = this.inner.sessionManager;
         const currentSessionFile = this.inner.sessionFile;
@@ -360,6 +466,7 @@ export class AgentSessionWrapper {
       }
 
       case "navigate_tree": {
+        if (this.isRunning()) throw new Error("请等待任务结束后切换会话分支。");
         const result = await this.inner.navigateTree(command.targetId as string, {});
         return { cancelled: result.cancelled };
       }
@@ -465,6 +572,7 @@ export class AgentSessionWrapper {
       }
 
       case "set_tools": {
+        if (this.isRunning()) throw new Error("请等待当前任务或实验操作结束后切换工具。");
         const toolNames = command.toolNames as string[];
         this.setForceEmptySystemPrompt(toolNames.length === 0);
         if (this.inner.getAllTools().some((tool) => tool.name === "comms_find")) {

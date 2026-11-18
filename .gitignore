@@ -19,6 +19,7 @@ bin/matlab-mcp-server
 # 产物
 plots/*.png
 reports/
+.comms-experiments/
 
 # 独立仓库的真实项目（自带 .git）
 real_projects/
