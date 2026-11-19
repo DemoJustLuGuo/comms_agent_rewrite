@@ -25,21 +25,33 @@ const ALIASES: Record<string, string> = {
   comms_lint: "通信代码检查 单位检查 代码优化 体检",
   equivalence_check: "等价校验 数值回归 基线 候选 容差",
   online_knowledge: "通信标准 在线知识 rfc arxiv 3gpp",
-  plot: "绘图 图片 星座图 频谱图 眼图 ber曲线",
+  plot: "绘图 图片 星座图 频谱图 眼图 ber曲线 误码率曲线 曲线",
 }
 
 export const DOMAIN_NAMES = DEFS.map((definition) => definition.name)
 export const DISCOVERY_NAMES = ["comms_find", "comms_batch"]
 export const CORE_NAMES = ["read", "grep", "find", "ls", "bash", "edit", "write", "link_budget", ...DISCOVERY_NAMES]
 
+/**
+ * \u51fa\u56fe\u610f\u56fe\uff1a\u7528\u6237\u8bf4\u300c\u753b / \u7ed8\u5236 / \u51fa\u56fe\u300d\u65f6\uff0cplot \u5fc5\u987b\u8fdb\u5165\u53d1\u73b0\u7ed3\u679c\u3002
+ *
+ * \u8bc4\u5206\u91cc\u300c\u661f\u5ea7\u56fe\u300d\u5bf9 plot \u4e0e modulation \u90fd\u547d\u4e2d\uff08modulation \u522b\u540d\u662f\u300c\u661f\u5ea7\u300d\uff09\uff0c
+ * \u4e24\u8005\u540c\u5206\u800c\u540c\u5206\u6309\u6570\u7ec4\u987a\u5e8f\u6392\uff0cplot \u6392\u5728 channel \u4e4b\u540e\u88ab limit \u622a\u6389\u2014\u2014\u6a21\u578b\u5df2\u62ff\u5230
+ * modulation \u7684\u661f\u5ea7\u70b9\u5374\u8c03\u4e0d\u5230 plot\uff0c\u4e8e\u662f\u9000\u56de bash \u81ea\u5df1\u88c5 matplotlib\uff08\u5386\u53f2\u6545\u969c\uff09\u3002
+ * \u8fd9\u91cc\u7528\u663e\u5f0f\u610f\u56fe\u8bcd\u52a0\u6743\uff0c\u800c\u4e0d\u662f\u8c03\u5927 limit \u6216\u4f9d\u8d56\u6392\u5e8f\u5de7\u5408\u3002
+ */
+const DRAW_INTENT = /(\u7ed8\u5236|\u753b|\u51fa\u56fe|\u53ef\u89c6\u5316|\u7ed8\u56fe|\u56fe\u7247|png|\u661f\u5ea7\u56fe|\u9891\u8c31\u56fe|\u773c\u56fe|\u66f2\u7ebf\u56fe)/u
+
 export function findTools(query: string, available: string[], limit = 3) {
   const normalized = query.toLowerCase().trim()
   const tokens = normalized.match(/[a-z][a-z0-9_]+|[\u4e00-\u9fff]{2,}/g) ?? []
+  const wantsDraw = DRAW_INTENT.test(normalized)
   return DEFS.filter((definition) => available.includes(definition.name)).map((definition) => {
     const aliases = (ALIASES[definition.name] ?? "").split(" ")
     const text = `${definition.name} ${definition.label} ${definition.description}`.toLowerCase()
-    const score = aliases.reduce((total, alias) => total + (normalized.includes(alias) ? 8 : 0), 0)
+    const base = aliases.reduce((total, alias) => total + (normalized.includes(alias) ? 8 : 0), 0)
       + tokens.reduce((total, token) => total + (text.includes(token) ? 2 : 0), 0)
+    const score = base + (wantsDraw && definition.name === "plot" && base > 0 ? 12 : 0)
     return { definition, score }
   }).filter((match) => match.score > 0).sort((first, second) => second.score - first.score)
     .slice(0, Math.max(1, Math.min(5, limit))).map((match) => match.definition)

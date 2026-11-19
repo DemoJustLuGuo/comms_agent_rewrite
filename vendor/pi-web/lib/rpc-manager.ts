@@ -2,6 +2,7 @@ import { createAgentSessionFromServices, createAgentSessionServices, getAgentDir
 import { ExperimentEngine, experimentIdFor, type ExperimentConfig } from "../../../.pi/extensions/comms-experiments/engine";
 import { experimentSummary } from "../../../.pi/extensions/comms-experiments/index";
 import { getAllowedFileRoots, isFilePathAllowed } from "./file-access";
+import { agentResourcePaths, resourceLoaderOptionsFor } from "./agent-resources";
 import { realpathSync } from "node:fs";
 import { randomUUID } from "crypto";
 import { cacheSessionPath } from "./session-reader";
@@ -1065,7 +1066,13 @@ export async function startRpcSession(
 
     // Build services first so extension-registered providers are available
     // before the SDK restores the saved model from the session file.
-    const services = await createAgentSessionServices({ cwd, agentDir });
+    // 通信域工具、提示词模板与 AGENTS.md 按智能体仓库根注入，与用户选择的工作目录无关
+    // （见 lib/agent-resources.ts）；路径按 realpath 去重，cwd 就是仓库时不会重复注册。
+    const services = await createAgentSessionServices({
+      cwd,
+      agentDir,
+      resourceLoaderOptions: resourceLoaderOptionsFor(agentResourcePaths()),
+    });
     const { session: inner } = await createAgentSessionFromServices({
       services,
       sessionManager,

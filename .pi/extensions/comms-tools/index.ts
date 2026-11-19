@@ -21,8 +21,12 @@ export default function (pi: ExtensionAPI) {
       description: def.description,
       ...(def.promptSnippet ? { promptSnippet: def.promptSnippet } : {}),
       parameters: def.parameters,
-      async execute(_toolCallId, params, signal) {
-        const result = await runPyTool(def.name, def.spec, params, signal)
+      async execute(_toolCallId, params, signal, _update, ctx) {
+        // 产物类工具（plot）的输出目录跟随会话工作区（用户在 Web 侧栏选择的 cwd），
+        // 而不是智能体仓库根——否则图落在 /api/files 白名单之外，聊天区无法内联显示。
+        // ctx.sessionManager 在无会话上下文（脚本化冒烟）时缺省，此时退回仓库根。
+        const workspaceRoot = (ctx as { sessionManager?: { getCwd?: () => string } } | undefined)?.sessionManager?.getCwd?.()
+        const result = await runPyTool(def.name, def.spec, params, signal, workspaceRoot)
         if (!result.details.ok) throw new Error(result.content[0].text)
         return result
       },
@@ -74,6 +78,6 @@ export default function (pi: ExtensionAPI) {
     if (preset !== "full" || experimentActive) applyPreset()
   })
   pi.on("tool_result", (event) => {
-    if (event.toolName === "comms_batch" && event.details?.ok === false) return { isError: true }
+    if (event.toolName === "comms_batch" && (event.details as { ok?: boolean } | undefined)?.ok === false) return { isError: true }
   })
 }

@@ -5,7 +5,8 @@
   "description": "通信系统智能体（pi 运行时重写）：域工具经 .pi/extensions 注册，Python 计算核在 tools/",
   "type": "module",
   "workspaces": [
-    "vendor/pi-web"
+    "vendor/pi-web",
+    "vendor/pi-mcp-extension"
   ],
   "scripts": {
     "pi": "pi",

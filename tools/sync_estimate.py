@@ -44,7 +44,8 @@ def load_payload() -> dict:
 
 
 def _from_file(path: str) -> np.ndarray:
-    text = Path(path).read_text(encoding="utf-8").strip()
+    from _paths import resolve_input_path
+    text = resolve_input_path(path).read_text(encoding="utf-8").strip()
     if not text:
         return np.array([], dtype=complex)
     try:

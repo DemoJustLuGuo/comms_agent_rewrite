@@ -614,15 +614,76 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
             {agentRunning && !extensionDialog && <p role="status" className="mb-3 text-sm text-text-muted">{phaseLabel(agentPhase)}</p>}
             {extensionDialog?.method === "confirm" && <ApprovalRequest request={extensionDialog} count={pendingRequestCount} busy={respondingRequestId !== null} error={extensionResponseError} onRespond={respondToExtensionUi} />}
             <ExperimentPanel key={session?.id ?? newSessionCwd} experiment={experiment} busy={experimentBusy || agentRunning} error={experimentError} cwd={messageCwd ?? ""} sessionId={session?.id} onAction={handleExperimentAction} onOptimize={(message) => void handleSend(message)} onOpenFile={onOpenFile} />
-            {messages.slice(messages.findLastIndex((message) => message.role === "user") + 1).filter((message) => message.role === "toolResult" && message.isError).map((message) => (
-              <p key={(message as ToolResultMessage).toolCallId} role="alert" className="mb-2 max-h-24 overflow-auto whitespace-pre-wrap break-words text-sm text-red-500">工具失败：{(message as ToolResultMessage).content.filter((block) => block.type === "text").map((block) => block.type === "text" ? block.text : "").join("\n")}</p>
-            ))}
+            <RecentToolErrors messages={messages} />
             <ExtensionWidgets widgets={belowEditorWidgets} />
           </div>
         </div>
         {chatInputElement}
       </div>
       </>
+      )}
+    </div>
+  );
+}
+
+/**
+ * 最近一轮的失败工具结果摘要，固定在输入框上方。
+ *
+ * 历史行为是把错误全文逐条平铺（max-h-24 滚动），失败多时把整个输入区顶出视野且无法
+ * 关闭。错误详情在消息流里已有配对的红色展示，这里只做「提醒 + 定位」：默认收起为
+ * 一行计数，点开显示最近 3 条、每条截断 200 字符，可手动关闭本轮提醒。
+ */
+function RecentToolErrors({ messages }: { messages: AgentMessage[] }) {
+  const [dismissedRound, setDismissedRound] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState(false);
+  const lastUserIdx = messages.findLastIndex((message) => message.role === "user");
+  const errors = messages
+    .slice(lastUserIdx + 1)
+    .filter((message): message is ToolResultMessage => message.role === "toolResult" && message.isError === true);
+  const roundKey = `${lastUserIdx}:${errors.map((message) => message.toolCallId).join(",")}`;
+  // 换一轮（新用户消息或错误集合变化）时自动恢复提醒与收起状态
+  const [seenRound, setSeenRound] = useState(roundKey);
+  if (seenRound !== roundKey) {
+    setSeenRound(roundKey);
+    setDismissedRound(null);
+    setExpanded(false);
+  }
+
+  if (errors.length === 0 || dismissedRound === roundKey) return null;
+
+  const summary = (message: ToolResultMessage) => {
+    const text = message.content.filter((block) => block.type === "text").map((block) => (block.type === "text" ? block.text : "")).join("\n").trim();
+    return text.length > 200 ? `${text.slice(0, 200)}…` : text;
+  };
+
+  return (
+    <div role="alert" className="mb-2 rounded-md border border-red-500/30 bg-red-500/5 text-sm text-red-500">
+      <div className="flex items-center gap-2 px-3 py-1.5">
+        <button
+          type="button"
+          onClick={() => setExpanded((value) => !value)}
+          className="flex flex-1 items-center gap-2 border-none bg-transparent p-0 text-left text-red-500 cursor-pointer"
+        >
+          <span>{expanded ? "▾" : "▸"} 本轮 {errors.length} 个工具调用失败</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => setDismissedRound(roundKey)}
+          title="隐藏本轮失败提醒"
+          className="border-none bg-transparent p-0 text-red-500/70 hover:text-red-500 cursor-pointer text-base leading-none"
+        >
+          ×
+        </button>
+      </div>
+      {expanded && (
+        <div className="max-h-32 overflow-auto border-t border-red-500/20 px-3 py-1.5">
+          {errors.slice(-3).map((message) => (
+            <p key={message.toolCallId} className="mb-1 whitespace-pre-wrap break-words text-xs leading-relaxed">
+              {summary(message)}
+            </p>
+          ))}
+          {errors.length > 3 && <p className="text-xs text-red-500/60">仅显示最近 3 条，共 {errors.length} 条。</p>}
+        </div>
       )}
     </div>
   );

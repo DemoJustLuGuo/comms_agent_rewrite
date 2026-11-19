@@ -14,6 +14,11 @@ assert.equal(findTools("fft 频谱", DOMAIN_NAMES)[0].name, "signal_analysis")
 assert.equal(findTools("LDPC 纠错", DOMAIN_NAMES)[0].name, "channel_coding")
 assert.equal(findTools("这里的 MAC 地址怎么配置", DOMAIN_NAMES).length, 0)
 assert.equal(findTools("等价校验", ["link_budget"]).length, 0)
+// 出图意图必须让 plot 进入结果：否则模型拿到星座点却调不到 plot，退回 bash 装 matplotlib。
+for (const query of ["16QAM 星座图 加入 AWGN 噪声 SNR", "画 16QAM 星座图", "误码率曲线怎么画"]) {
+  assert.ok(findTools(query, DOMAIN_NAMES).some((definition) => definition.name === "plot"), query)
+}
+assert.equal(findTools("16QAM 理论 BER 是多少", DOMAIN_NAMES)[0].name, "ber_snr")
 assert.equal(approvalTier("write"), "write")
 assert.equal(approvalTier("equivalence_check"), "exec")
 assert.equal(approvalTier("unknown_extension"), "exec")

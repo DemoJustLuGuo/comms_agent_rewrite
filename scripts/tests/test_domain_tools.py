@@ -572,10 +572,13 @@ class PlotTests(unittest.TestCase):
         self.assertEqual(artifact["path"], "plots/_test_constellation.png")
         self.assertEqual(artifact["mime"], "image/png")
         self.assertEqual(artifact["meta"]["plot_type"], "constellation")
-        # Web UI 内联行：绝对路径、盘符冒号已编码（pi-web /api/files 只认绝对路径）
+        # Web UI 内联行：绝对路径、已 URL 编码（pi-web /api/files 只认绝对路径）
         md_line = next((l for l in r.stdout.splitlines() if l.startswith("Markdown 内联")), "")
         self.assertIn("](/api/files/", md_line)
-        self.assertIn("%3A", md_line)
+        # 编码后的路径里不得残留未转义的空格/中文；Windows 盘符冒号须为 %3A
+        url_path = md_line.split("](/api/files/", 1)[1].split("?", 1)[0]
+        for ch in (" ", ":", "\\"):
+            self.assertNotIn(ch, url_path)
         self.assertIn("_test_constellation.png?type=download)", md_line)
 
     def test_cwd_independent_output(self):

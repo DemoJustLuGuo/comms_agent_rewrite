@@ -44,7 +44,8 @@ def load_array(payload: dict, key: str) -> np.ndarray:
 def load_signal(payload: dict) -> np.ndarray:
     signal_file = payload.get("signal_file")
     if signal_file:
-        text = Path(signal_file).read_text(encoding="utf-8").strip()
+        from _paths import resolve_input_path
+        text = resolve_input_path(signal_file).read_text(encoding="utf-8").strip()
         if not text:
             return np.array([], dtype=np.float64)
         try:

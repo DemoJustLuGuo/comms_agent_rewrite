@@ -28,7 +28,7 @@ export function resolveInput(input: Record<string, unknown>, tool: string, resul
   }))
 }
 
-export async function runCalculationBatch(steps: CalculationStep[], available: string[], ctx: Pick<ExtensionContext, "hasUI" | "ui">, signal?: AbortSignal) {
+export async function runCalculationBatch(steps: CalculationStep[], available: string[], ctx: Pick<ExtensionContext, "hasUI" | "ui"> & { sessionManager?: ExtensionContext["sessionManager"] }, signal?: AbortSignal) {
   const results = new Map<string, PyToolResult>()
   const records: Array<{ id: string; tool: string; input: Record<string, unknown>; result: PyToolResult }> = []
   if (!steps.length || steps.length > 8 || new Set(steps.map((step) => step.id)).size !== steps.length) throw new Error("计算链必须包含 1–8 个唯一编号的步骤。")
@@ -43,7 +43,7 @@ export async function runCalculationBatch(steps: CalculationStep[], available: s
     const args = validateToolArguments(definition, { type: "toolCall", id: step.id, name: step.tool, arguments: input })
     const denied = await authorizeTool(step.tool, args, ctx)
     if (denied) throw new Error(denied.reason)
-    const result = await runPyTool(step.tool, definition.spec, args, signal)
+    const result = await runPyTool(step.tool, definition.spec, args, signal, ctx.sessionManager?.getCwd?.())
     records.push({ id: step.id, tool: step.tool, input: args, result })
     if (!result.details.ok || !result.details.data) return { content: result.content, details: { ok: false, failedStep: step.id, steps: records } }
     results.set(step.id, result)

@@ -66,3 +66,54 @@
 - 停止请求取消当前验证进程组及待审批请求，持久化停止状态；继续后才能再次运行。命令层测试覆盖重复启动拒绝、审批取消与过期批准无效。
 - 最终验证包含 `scripts/check-web-reform.sh`、README 链接与标题门禁、前端组件 lint（无失败，真实弹窗阴影一项警告）。最终 ModulationPy 候选复测约 1.067 ms，等价校验仍通过；运行时间在本机有波动，最佳候选按各轮实测值显示。
 - 实际模型持续优化行为与窄屏视觉检查尚未验收；实验预算和状态判定由服务端执行，与模型是否遵循提示分开验证。
+
+## 任务四：智能体级资源（2026-11-19）
+
+### 问题
+
+Web 工作台的会话 cwd 由用户在侧栏任选。pi 默认把扩展、提示词模板、`AGENTS.md` 和 MCP 配置都绑在 cwd 上（`<cwd>/.pi/extensions`、`<cwd>/.pi/prompts`、自 cwd 向上查找 `AGENTS.md`、`<cwd>/.pi/mcp.json`），因此把会话建在空目录时**一个通信扩展都不会加载**。实测该会话只带 `edit/read/bash/write` 四个内建工具：链路预算与 BER 全部由模型手写 `python3 -c` 计算，星座图因系统 python 缺 numpy 而失败。通信域工具属于智能体本体，不应随工作目录消失。
+
+### 变更
+
+- `vendor/pi-web/lib/agent-resources.ts`：按 `COMMS_AGENT_ROOT`（缺省时由文件位置上溯仓库根）解析扩展、提示词目录与 `AGENTS.md`，组装 `resourceLoaderOptions` 交给 `createAgentSessionServices`。`AGENTS.md` 仅在 cwd 未首加载时追加。
+- `vendor/pi-web/lib/rpc-manager.ts`：`startRpcSession` 创建服务时注入上述资源。
+- `vendor/pi-mcp-extension/`：fork 上游 1.5.0（MIT），`config.ts` 增加 agent 级 `<COMMS_AGENT_ROOT>/.pi/mcp.json`，合并顺序 cwd > agent > global，同路径只读一次；未设置 env 时行为与上游一致。
+- `.pi/settings.json`：移除 `npm:pi-mcp-extension` package，改为项目级 `extensions` 指向 vendor 副本，避免 TUI 与 Web 双份注册。
+- `scripts/comms-env.sh` 导出 `COMMS_AGENT_ROOT`；`scripts/check-runtime.sh` 的对应守卫改为检查 vendor 副本。
+
+### 验证
+
+核验日期：2026-11-19。
+
+- 空目录 cwd 与会话在仓库根时的对比：均为 5 个扩展 / 30 个域工具 / 15 个提示模板，工具名无重复、无加载错误；`createAgentSessionFromServices` 后两种 cwd 均含 `link_budget` 与 `comms_find`，共 37 个工具。
+- 扩展路径去重依赖 pi 的 realpath 比较，cwd 即仓库根时不会重复注册（0 冲突诊断）。**注意**：`additionalExtensionPaths` 若传目录会报 `Cannot find module`，必须逐文件列出。
+- MCP 配置解析：未设 `COMMS_AGENT_ROOT` 时仅读到 global（`magpie-memory`）；设置后从任意 cwd 读到 agent 级 `matlab`、`fetch`。
+- `tsc --noEmit`（pi-web）通过；`node --test` 的 8 项（含新增 3 项 `agent-resources` 回归）通过；`check_toolkit`（10/13/34 工具）、审批门 5 项、扩展冒烟、实验三项检查通过。
+- 未验证：真实模型在新配置下是否稳定选择域工具而未继续用 bash；MCP 服务实际连接（本机无 MATLAB，fetch 需联网拉取）；Windows 路径形态。
+
+## 任务五：工具产物跟随工作区（2026-11-19）
+
+### 问题
+
+用户指出 plot 把星座图写进智能体仓库（`<repo>/plots/`）而非所选工作区，且 Web 聊天区不渲染图片。核实为两层缺陷，均非模型不守规矩：
+
+1. `tools/plot.py` 刻意把输出锚定到脚本所在仓库（历史修复：防产物写进 node_modules）。Web 允许任选工作区后，仓库目录不在 `/api/files` 白名单（按会话 cwd + projectRoot 授权），模型贴出的图片链接 403，聊天区无法内联显示。
+2. `tools/comms_lint.py` 声称「.ts 端已把子进程 cwd 设为会话目录」并以 `Path.cwd()` 为根——该注释与实际不符（runner 固定 cwd 为仓库根），导致体检相对路径永远解析到仓库、工作区文件被判越界。
+
+全量排查 25 个域工具的文件访问：仅 `plot` 写文件、仅 `comms_lint` 读项目内文件受此影响；`signal_analysis` / `signal_diagnose` / `sync_estimate` 的 `signal_file` 相对路径经子进程 cwd 解析（仓库根），模型通常传绝对路径且 Python 直读不经 `/api/files` 白名单，低风险暂不改；`channel_coding` 的 LDPC 设计文件随 commpy 包分发，无工作区依赖。
+
+### 变更
+
+- `runner.ts`：`runPyTool` 增加可选 `workspaceRoot`（取自 `ctx.sessionManager.getCwd()`），经 `COMMS_WORKSPACE_ROOT` 传给工具子进程；`comms_batch` 同步透传。
+- `tools/plot.py`、`tools/comms_lint.py`：根目录解析改为 `COMMS_WORKSPACE_ROOT` 优先、脚本位置兜底，TUI/脚本未注入 env 时行为不变；两者越界防护边界随根切换。
+- `defs.ts`：`comms_lint` 的 path 描述同步为「会话工作区内」。
+
+### 验证
+
+核验日期：2026-11-19。
+
+- `plot.py`：env 注入时写 `<工作区>/plots/`，无 env 时写仓库 `plots/`；`GET /api/files/<工作区>/plots/constellation.png` 返回 200 与合法 PNG（修复前 403）。
+- `comms_lint.py`：工作区相对路径命中、仓库兜底、绝对路径越界仍拒绝，三态实测。
+- 真实模型会话（空目录工作区）：`comms_find` → `modulation` → `plot` 链路正确；一次 bash 探测被审批门拒绝后模型自发改用域工具。`plot` 为写入级需页面审批，批准后图才落盘。
+- 回归：域工具 136 项、扩展冒烟 28 项、toolkit（10/13/34）、runtime 自检、web 测试 10 项全过。
+- 遗留：模型输出内联链接带双斜杠（`/api/files//home/...`），靠 308 重定向兜住已验证可达，URL 拼接未修；`signal_file` 相对路径解析到仓库根的行为保留（见上，暂不改）。

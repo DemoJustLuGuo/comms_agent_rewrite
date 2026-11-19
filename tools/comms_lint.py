@@ -4,12 +4,12 @@
 给 comms-optimize 一个客观（提示非拦截）的闭环标准。只读目标文件，不写、不执行。
 
 参数以 JSON 传入（argv[1] 优先，其次 stdin）：
-    path: str     — 待检查文件（项目根目录内的 .py 或 .m），相对 comms-agent 根或绝对路径
+    path: str     — 待检查文件（工作区根目录内的 .py 或 .m），相对工作区根或绝对路径
     checks: str?  — all | units | numpy | repro | protocol | secrets（默认 all）
     strict: bool? — 为 true 时若存在 error 级发现则以非零退出（供 CI）；默认 false（仅提示）
 输出：分级发现清单（ERROR/WARN/INFO + file:line + 建议）与统计摘要。
 单位：本工具不做数值计算；检查项本身关注「代码是否标注单位/是否可复现/是否用 NumPy」等工程约定。
-安全：路径受限在项目根内；疑似密钥只报 file:line 与短标签，绝不回显密钥值或整文件内容。
+安全：路径受限在工作区根内（COMMS_WORKSPACE_ROOT，缺省为智能体仓库根）；疑似密钥只报 file:line 与短标签，绝不回显密钥值或整文件内容。
 """
 import ast
 import json
@@ -21,7 +21,17 @@ from pathlib import Path
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
-ROOT = Path.cwd()  # 工作区根：.ts 端已把子进程 cwd 设为会话目录；直接跑脚本/测试时为当前目录
+def _resolve_root() -> Path:
+    # 与 plot.py 同一约定：COMMS_WORKSPACE_ROOT（会话工作区，runner.ts 注入）优先，
+    # 兜底为脚本位置（tools/ 的上一级）。不能信 Path.cwd()——runner 固定把子进程 cwd
+    # 设为智能体仓库根（防产物写进 node_modules），Web 任选工作区时那不是被检项目。
+    env_root = os.environ.get("COMMS_WORKSPACE_ROOT")
+    if env_root:
+        return Path(env_root)
+    return Path(__file__).resolve().parent.parent
+
+
+ROOT = _resolve_root()
 ALL_CHECKS = ("units", "numpy", "repro", "protocol", "secrets")
 
 # 物理量名字根：变量名含这些根却缺单位标注时告警

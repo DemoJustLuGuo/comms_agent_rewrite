@@ -92,15 +92,23 @@ def _load_ldpc():
         return None
 
 
+_POLAR_IMPORT_ERROR = None  # _load_polar 导入失败时的真实异常，用于区分未安装/已损坏
+
+
 def _load_polar():
     """Polar：polarcodes 第三方库（Brendon McBain）——PolarCode 对象 + Construct/Encode/Decode。
 
     该库 API 有状态且版本敏感，全部调用点包 try/except，API 不符时返回清晰错误而非乱码。
     """
+    global _POLAR_IMPORT_ERROR
+    _POLAR_IMPORT_ERROR = None
     try:
         from polarcodes import PolarCode, Construct, Encode, Decode
         return PolarCode, Construct, Encode, Decode
-    except Exception:
+    except Exception as e:
+        # 区分「未安装」与「已安装但导入失败」（如 polarcodes 依赖 tkinter，缺 libtk 时
+        # 导入即失败）。不区分会把环境缺库误报成「请 uv sync」，让人白折腾。
+        _POLAR_IMPORT_ERROR = f"{type(e).__name__}: {e}"
         return None
 
 
@@ -548,6 +556,11 @@ def main() -> None:
         if result is None:
             # scikit-commpy（卷积/LDPC/Turbo）/ reedsolo（RS）/ polarcodes（Polar）为硬依赖，
             # 正常经 `uv sync` 装齐；直接运行脚本而未装依赖时给出清晰引导，不再作为「可选降级」。
+            if code == "polar_sc_r12" and _POLAR_IMPORT_ERROR:
+                print(f"错误：py-polar-codes 已安装但导入失败：{_POLAR_IMPORT_ERROR}。")
+                print("该库导入时依赖 tkinter（需要系统 libtk / libtcl）；"
+                      "Linux 请安装 tk（Arch: `pacman -S tk`，Debian/Ubuntu: `apt install tk`）后重试。")
+                return
             print("错误：本工具依赖 scikit-commpy（卷积/LDPC/Turbo）/ reedsolo（RS）/ "
                   "py-polar-codes（Polar，导入名 polarcodes）。"
                   "请在 comms-agent 目录执行 `uv sync`（或 pip install -r requirements.txt）后重试。")

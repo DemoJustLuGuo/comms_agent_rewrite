@@ -56,6 +56,7 @@ export function runPyTool(
   spec: PyToolSpec,
   params: unknown,
   signal?: AbortSignal,
+  workspaceRoot?: string,
 ): Promise<PyToolResult> {
   const script = path.join(TOOLS_DIR, spec.script)
   const timeoutMs = spec.timeoutMs ?? 30_000
@@ -80,6 +81,12 @@ export function runPyTool(
         // 固定项目根为子进程 cwd：pi-web 拉起的 pi 进程 cwd 是 pi-web 包目录
         // （曾把 plots/ 产物写进 node_modules），TUI 下也恒等于项目根，行为一致。
         cwd: PROJECT_ROOT,
+        env: {
+          ...process.env,
+          // 会话工作区（Web 侧栏选择的目录）：产物类工具（plot）写图、报相对路径时以此为准，
+          // 而不是智能体仓库根。未传（脚本化冒烟/实验引擎）时 Python 侧退回智能体仓库根。
+          ...(workspaceRoot ? { COMMS_WORKSPACE_ROOT: workspaceRoot } : {}),
+        },
         stdio: ["pipe", "pipe", "pipe"],
         windowsHide: true,
       })

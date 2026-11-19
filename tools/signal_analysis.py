@@ -46,7 +46,8 @@ def load_signal(payload: dict) -> np.ndarray:
     """从 signal_file（优先）或 signal 字段取时域采样值。"""
     signal_file = payload.get("signal_file")
     if signal_file:
-        text = Path(signal_file).read_text(encoding="utf-8").strip()
+        from _paths import resolve_input_path
+        text = resolve_input_path(signal_file).read_text(encoding="utf-8").strip()
         if not text:
             return np.array([], dtype=np.float64)
         # 先按 JSON 数组解析，失败再按空白/逗号分隔的数值解析

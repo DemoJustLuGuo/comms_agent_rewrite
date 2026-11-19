@@ -517,7 +517,7 @@ export const DEFS: CommsToolDef[] = [
       "通信代码体检（提示非拦截）：对项目内 .py/.m 文件启发式检查——数值是否标注单位、是否手写 FFT/erfc 等标准算法、随机过程是否设种子、协议解析是否文档化帧结构/字节序、是否硬编码密钥/绝对路径。改数值代码前后可各跑一次作为客观依据。",
     promptSnippet: "改通信/数值代码前后各调用一次 comms_lint 体检目标 .py/.m（单位/复现/NumPy/协议/密钥），提示非拦截。",
     parameters: Type.Object({
-      path: Type.String({ description: "待检查文件（项目根目录内的 .py 或 .m），相对项目根或绝对路径" }),
+      path: Type.String({ description: "待检查文件（会话工作区内的 .py 或 .m），相对工作区根或绝对路径" }),
       checks: Type.Optional(
         StringEnum(["all", "units", "numpy", "repro", "protocol", "secrets"], {
           description: "检查项，默认 all；也可逗号分隔多个（如 units,repro）",
@@ -582,17 +582,19 @@ export const DEFS: CommsToolDef[] = [
     name: "plot",
     label: "通信绘图",
     description:
-      "通信可视化绘图：生成星座图(constellation)、频谱(spectrum)、波形(waveform)、BER 曲线(ber_curve)、眼图(eye) 的 PNG，返回文件路径。图以文件交付，可在 Web UI 查看。",
+      "通信可视化绘图：生成星座图(constellation)、频谱(spectrum)、波形(waveform)、BER 曲线(ber_curve)、眼图(eye) 的 PNG，返回文件路径。constellation 支持 noise_snr_db 直接画「SNR=x dB 下的星座图」（理想点+AWGN 散点），不必另写脚本。图以文件交付，Web UI 聊天区与图片面板都会显示。",
     promptSnippet:
-      "需要星座图/频谱/BER 曲线/波形/眼图时调用 plot 生成 PNG；回复中必须原样包含工具输出的「Markdown 内联」图片行（Web 界面内联显示），并告知文件路径。",
+      "星座图/频谱/BER 曲线/波形/眼图一律调用 plot（带 SNR 的星座图用 constellation+noise_snr_db，不要自己写脚本）；回复中必须原样包含工具输出的「Markdown 内联」图片行（Web 界面内联显示），并告知文件路径。",
     parameters: Type.Object({
       plot_type: StringEnum(["constellation", "spectrum", "waveform", "ber_curve", "eye"], { description: "图类型" }),
       title: Type.Optional(Type.String({ description: "图标题" })),
       output_path: Type.Optional(
         Type.String({ description: "输出 PNG 路径，仅允许写入项目 plots/ 目录，默认 plots/<plot_type>.png" }),
       ),
-      i: Type.Optional(Type.Array(Type.Number(), { description: "constellation：同相分量 I" })),
+      i: Type.Optional(Type.Array(Type.Number(), { description: "constellation：同相分量 I（平均符号能量 Es=1，modulation 工具输出口径）" })),
       q: Type.Optional(Type.Array(Type.Number(), { description: "constellation：正交分量 Q" })),
+      noise_snr_db: Type.Optional(Type.Number({ description: "constellation 可选：叠加 AWGN 的 SNR（Es/N0，dB）。给了就画理想点×+噪声散点·，适合「XX dB 下的星座图」类问题" })),
+      seed: Type.Optional(Type.Number({ description: "constellation 叠加噪声时的随机种子（可复现），默认 0" })),
       signal: Type.Optional(Type.Array(Type.Number(), { description: "spectrum/waveform/eye：时域信号采样值" })),
       sample_rate_hz: Type.Optional(Type.Number({ description: "spectrum/waveform：采样率 Hz" })),
       samples_per_symbol: Type.Optional(Type.Number({ description: "eye：每符号采样数" })),

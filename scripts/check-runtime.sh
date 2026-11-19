@@ -53,8 +53,9 @@ if [ -n "${PYTHON_BIN:-}" ]; then
     [ -f "$ROOT/bin/matlab-mcp-server.exe" ] || [ -f "$ROOT/bin/matlab-mcp-server" ] \
       && ok "matlab-mcp-server 二进制存在" || warn "缺 bin/matlab-mcp-server（获取方式见 bin/README.md），MATLAB 工具不可用"
     [ -f "$ROOT/.pi/mcp.json" ] && ok ".pi/mcp.json（matlab server 配置）" || bad "缺 .pi/mcp.json"
-    grep -q "pi-mcp-extension" "$ROOT/.pi/settings.json" 2>/dev/null \
-      && ok "pi-mcp-extension 已在项目 packages" || bad ".pi/settings.json 缺 pi-mcp-extension"
+    [ -f "$ROOT/vendor/pi-mcp-extension/src/index.ts" ] \
+      && ok "pi-mcp-extension 已 vendor（按智能体根加载，不随 cwd）" \
+      || bad "缺 vendor/pi-mcp-extension（MCP 工具不可用）"
   else
     warn "未发现 MATLAB（MATLAB_ROOT/PATH/注册表均无）——MATLAB 工具自动不可用，不影响其他功能"
   fi

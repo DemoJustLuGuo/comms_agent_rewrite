@@ -31,6 +31,11 @@ ROOT_W="$(cygpath -m "$ROOT" 2>/dev/null || echo "$ROOT")"
 export PI_CODING_AGENT_DIR="$ROOT_W/agent-home"
 mkdir -p "$ROOT/agent-home"
 
+# 智能体仓库根：扩展、提示词模板、AGENTS.md 与 MCP 配置（.pi/mcp.json）按它解析，
+# 而不是按会话工作目录。Web 工作台允许任选 cwd，通信工具不应随目录消失
+# （见 vendor/pi-web/lib/agent-resources.ts 与 vendor/pi-mcp-extension/src/config.ts）。
+export COMMS_AGENT_ROOT="$ROOT_W"
+
 # Git Bash（MSYS）会把以 / 开头的参数当 POSIX 路径转换成 Windows 路径，
 # 导致 "/term FSPL" 变成 "F:/Git/term FSPL"、提示词模板无法展开——禁用该转换。
 # 我们自己传给 pi 的路径已经过 cygpath 转成 Windows 形态，不受影响。

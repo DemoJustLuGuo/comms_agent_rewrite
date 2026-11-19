@@ -4,7 +4,7 @@
       "command": "python",
       "args": ["scripts/start_matlab_mcp.py"],
       "transport": "stdio",
-      "lifecycle": "eager",
+      "lifecycle": "lazy",
       "requestTimeoutMs": 120000
     },
     "fetch": {

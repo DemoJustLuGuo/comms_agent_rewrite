@@ -7,6 +7,7 @@
  */
 import commsTools from "../../.pi/extensions/comms-tools/index"
 import { DEFS } from "../../.pi/extensions/comms-tools/defs"
+import { resolvePython } from "../../.pi/extensions/comms-tools/runner"
 
 interface Registered {
   name: string
@@ -27,7 +28,7 @@ if (tools.filter((tool) => DEFS.some((definition) => definition.name === tool.na
   process.exit(1)
 }
 
-const VENV_PY = "F:/CODE/agent_rewrite_in_PI/.venv/Scripts/python.exe"
+const VENV_PY = resolvePython()
 const sine = Array.from({ length: 256 }, (_, n) => Math.sin((2 * Math.PI * 100 * n) / 1000))
 
 // 每工具一条快乐路径 + link_budget 一条域错误路径；参数刻意取小保证秒级返回。

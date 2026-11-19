@@ -15,6 +15,7 @@
 输出：保存路径 + 关键统计。单位：频率 Hz，幅度 dB，时间 s。
 """
 import json
+import os
 import sys
 from pathlib import Path
 from urllib.parse import quote
@@ -27,9 +28,30 @@ import matplotlib
 matplotlib.use("Agg")  # 无显示后端，服务器/管道环境可用
 import matplotlib.pyplot as plt
 
-# 工作区根锚定到脚本位置（tools/ 的上一级），不依赖子进程 cwd——
-# pi-web 拉起的 pi 进程 cwd 是 pi-web 包目录，靠 cwd 曾把产物写进 node_modules。
-ROOT = Path(__file__).resolve().parent.parent
+# 中文标签/图例字体：缺省 DejaVu Sans 无 CJK 字形，图内中文会变方框。
+# 按常见 CJK 字体顺序探测，全部缺失时保持默认（Latin 文本不受影响）。
+from matplotlib import font_manager
+
+_FOR_CANDIDATES = ("Noto Sans CJK SC", "Noto Sans CJK TC", "WenQuanYi Zen Hei", "PingFang SC", "Microsoft YaHei", "SimHei")
+_FOR_AVAILABLE = {f.name for f in font_manager.fontManager.ttflist}
+_FOR_FOUND = [name for name in _FOR_CANDIDATES if name in _FOR_AVAILABLE]
+if _FOR_FOUND:
+    plt.rcParams["font.sans-serif"] = [_FOR_FOUND[0], *plt.rcParams["font.sans-serif"]]
+    plt.rcParams["axes.unicode_minus"] = False
+
+# 工作区根的两级解析：COMMS_WORKSPACE_ROOT（会话工作区，由 runner.ts 注入）优先，
+# 兜底为脚本位置（tools/ 的上一级），不依赖子进程 cwd——pi-web 拉起的 pi 进程 cwd
+# 是 pi-web 包目录，靠 cwd 曾把产物写进 node_modules。
+# 图必须写进会话工作区（而非智能体仓库）：Web 的 /api/files 白名单按会话 cwd 授权，
+# 写进仓库的图 403 无法内联显示；TUI/脚本未注入 env 时退回旧行为（写仓库 plots/）。
+def _resolve_root() -> Path:
+    env_root = os.environ.get("COMMS_WORKSPACE_ROOT")
+    if env_root:
+        return Path(env_root)
+    return Path(__file__).resolve().parent.parent
+
+
+ROOT = _resolve_root()
 ARTIFACT_PREFIX = "COMM_ARTIFACT: "
 
 
@@ -64,13 +86,29 @@ def to_workspace_relative(path: Path) -> str:
 def plot_constellation(ax, payload):
     i = np.asarray(payload["i"], dtype=np.float64)
     q = np.asarray(payload["q"], dtype=np.float64)
-    ax.scatter(i, q, s=12, alpha=0.6)
+    snr_db = payload.get("noise_snr_db")
+    label_extra = ""
+    if snr_db is not None:
+        # 对每个输入符号叠加复高斯噪声（AWGN）。输入约定为平均符号能量 Es=1 的星座点
+        # （modulation 工具的输出口径）；若不是，噪声电平按实际功率缩放。
+        snr_lin = 10.0 ** (float(snr_db) / 10.0)
+        es = float(np.mean(np.abs(i + 1j * q) ** 2))
+        n0 = es / snr_lin
+        rng = np.random.default_rng(int(payload.get("seed", 0)))
+        noise = np.sqrt(n0 / 2.0) * (rng.standard_normal(i.size) + 1j * rng.standard_normal(i.size))
+        rx = i + 1j * q + noise
+        ax.scatter(rx.real, rx.imag, s=6, alpha=0.35, color="tab:blue", label="接收（含 AWGN）")
+        ax.scatter(i, q, s=42, marker="x", color="tab:red", linewidths=1.6, label="理想星座点")
+        ax.legend(loc="upper right", fontsize=8)
+        label_extra = f", SNR={float(snr_db):g} dB（Es/N0）, {i.size} 理想点 + 噪声散点, seed={payload.get('seed', 0)}"
+    else:
+        ax.scatter(i, q, s=12, alpha=0.6)
     ax.axhline(0, color="gray", lw=0.5)
     ax.axvline(0, color="gray", lw=0.5)
     ax.set_xlabel("In-phase (I)")
     ax.set_ylabel("Quadrature (Q)")
     ax.set_aspect("equal", adjustable="datalim")
-    return f"{i.size} 个符号点"
+    return f"{i.size} 个符号点{label_extra}"
 
 
 def plot_spectrum(ax, payload):
